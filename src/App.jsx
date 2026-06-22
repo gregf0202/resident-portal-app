@@ -1,21 +1,48 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient.js";
-import { T, SEM } from "./theme.js";
-import AnimatedHeader from "./components/AnimatedHeader.jsx";
 import SignIn from "./components/SignIn.jsx";
-import { Card, Btn, Badge, Empty, Splash } from "./components/ui.jsx";
-import Announcements from "./modules/Announcements.jsx";
-import Maintenance from "./modules/Maintenance.jsx";
+import { AppCtx, BuildingApp, Toast, themeById } from "./ResidentPortal.jsx";
+import { loadStore, persistChange } from "./db.js";
 
-const ROLE_LABEL = { admin: "Administrator", bcc: "Committee", manager: "Building manager", strata: "Strata manager", owner: "Owner", tenant: "Tenant" };
+const KEYFRAMES = `
+  @keyframes rpsun { 0%,100% { opacity:.75; transform:scale(1) } 50% { opacity:1; transform:scale(1.06) } }
+  @keyframes rpcloud { from { transform:translateX(-15%) } to { transform:translateX(115%) } }
+  @keyframes rpwave { from { transform:translateX(0) } to { transform:translateX(-50%) } }
+  @keyframes rptwinkle { 0%,100% { opacity:.1; transform:scale(.6) } 50% { opacity:1; transform:scale(1.25) } }
+  @keyframes rpfade { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:translateY(0) } }
+  .rp-twinkle { animation: rptwinkle 3s ease-in-out infinite; }
+  .rp-fade { animation: rpfade .5s ease both; }
+  .rp-hover { transition: transform .15s ease, box-shadow .15s ease; }
+  .rp-hover:hover { transform: translateY(-2px); }
+  @media (prefers-reduced-motion: reduce) { .rp-anim, .rp-twinkle, .rp-fade { animation: none !important; } }
+`;
+
+function Splash({ text }) {
+  return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: "#9fb2c8", background: "linear-gradient(165deg, #0a1019, #0c1320)", padding: 24, textAlign: "center", fontFamily: "system-ui, sans-serif" }}>{text}</div>;
+}
+
+function NoBuilding({ email, onSignOut }) {
+  return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(165deg, #0a1019, #0c1320)", color: "#e6edf5", padding: 24, fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ maxWidth: 420, textAlign: "center", background: "#101d30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: 24 }}>
+        <h2 style={{ marginTop: 0 }}>You're signed in</h2>
+        <p style={{ color: "#9fb2c8" }}>{email} isn't linked to a building yet. Your committee adds residents by email — once you've been added, your building will appear here automatically.</p>
+        <button onClick={onSignOut} style={{ background: "transparent", color: "#e6edf5", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "8px 14px" }}>Sign out</button>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
-  const [session, setSession] = useState(undefined); // undefined = still checking
-  const [profile, setProfile] = useState(null);
-  const [memberships, setMemberships] = useState([]);
-  const [activeId, setActiveId] = useState(null);
+  const [session, setSession] = useState(undefined);
+  const [store, setStore] = useState(null);
+  const [buildingId, setBuildingId] = useState(null);
+  const [userId, setUserId] = useState(null);
   const [view, setView] = useState("dashboard");
-  const [loadingData, setLoadingData] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [showGuide, setShowGuide] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -24,112 +51,55 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session) { setMemberships([]); setProfile(null); return; }
+    if (!session) { setStore(null); return; }
+    let cancelled = false;
     (async () => {
-      setLoadingData(true);
-      const { data: prof } = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
-      setProfile(prof);
-      const { data: mems } = await supabase
-        .from("memberships")
-        .select("building_id, role, msc, status, buildings(*)")
-        .eq("user_id", session.user.id)
-        .eq("status", "active");
-      setMemberships(mems || []);
-      if (mems && mems.length) setActiveId((prev) => prev || mems[0].building_id);
-      setLoadingData(false);
+      setLoading(true); setErr("");
+      try {
+        const { store: st, buildingId: bid, currentUserId } = await loadStore(session.user);
+        if (cancelled) return;
+        setStore(st); setBuildingId(bid); setUserId(currentUserId);
+      } catch (e) {
+        if (!cancelled) setErr(e.message || String(e));
+      }
+      if (!cancelled) setLoading(false);
     })();
+    return () => { cancelled = true; };
   }, [session]);
 
+  const flash = (m) => { setToast(m); window.clearTimeout(window.__t); window.__t = window.setTimeout(() => setToast(null), 2600); };
+  const update = (fn) => setStore((s) => {
+    const n = structuredClone(s);
+    fn(n);
+    persistChange(s, n, buildingId).catch((e) => { console.error("Save failed:", e); flash("Couldn't save — check your connection"); });
+    return n;
+  });
   const signOut = () => supabase.auth.signOut();
+  const openBuilding = (bid) => { setBuildingId(bid); setView("dashboard"); };
 
   if (session === undefined) return <Splash text="Loading…" />;
   if (!session) return <SignIn />;
-  if (loadingData) return <Splash text="Loading your building…" />;
-  if (!memberships.length) return <NoBuilding email={session.user.email} onSignOut={signOut} />;
+  if (loading) return <Splash text="Loading your building…" />;
+  if (err) return <Splash text={"Couldn't load: " + err} />;
+  if (!store || !store.buildings.length) return <NoBuilding email={session.user.email} onSignOut={signOut} />;
 
-  const active = memberships.find((m) => m.building_id === activeId) || memberships[0];
-  const building = active.buildings;
-  const role = active.role;
-  const msc = active.msc;
-  const profileName = profile?.full_name || session.user.email;
+  const building = store.buildings.find((b) => b.id === buildingId) || store.buildings[0];
+  const user = store.users.find((u) => u.id === userId) || null;
+  const T = themeById(building && building.themeId);
 
-  const NAV = [
-    { key: "dashboard", label: "Dashboard" },
-    { key: "announcements", label: "Announcements" },
-    { key: "maintenance", label: "Maintenance" },
-  ];
+  const ctx = {
+    store, update, T, building, buildingId, setBuildingId, user, userId, setUserId,
+    view, setView, toast, flash, openBuilding, showGuide, setShowGuide,
+    backend: true, signOut,
+  };
 
   return (
-    <div>
-      <AnimatedHeader>
-        <div style={{ maxWidth: 760, margin: "0 auto", padding: "22px 16px 60px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "rgba(255,255,255,0.75)" }}>{ROLE_LABEL[role] || role}</div>
-              <h1 style={{ margin: "4px 0 0", fontSize: 24, color: "#fff" }}>{building.name}</h1>
-              {building.tower_desc && <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 14 }}>{building.tower_desc}</div>}
-            </div>
-            <div style={{ textAlign: "right" }}>
-              {memberships.length > 1 && (
-                <select value={activeId} onChange={(e) => setActiveId(e.target.value)}
-                  style={{ background: "rgba(0,0,0,0.25)", color: "#fff", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 10, padding: "6px 8px", marginBottom: 8 }}>
-                  {memberships.map((m) => <option key={m.building_id} value={m.building_id} style={{ color: "#000" }}>{m.buildings.name}</option>)}
-                </select>
-              )}
-              <div><button onClick={signOut} style={{ background: "transparent", color: "rgba(255,255,255,0.85)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 10, padding: "6px 10px" }}>Sign out</button></div>
-            </div>
-          </div>
-        </div>
-      </AnimatedHeader>
-
-      <div style={{ position: "sticky", top: 0, zIndex: 20, background: T.bg, borderBottom: `1px solid ${T.border}` }}>
-        <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px", display: "flex", gap: 4 }}>
-          {NAV.map((n) => (
-            <button key={n.key} onClick={() => setView(n.key)}
-              style={{ background: "transparent", color: view === n.key ? T.accent : T.textMuted, fontWeight: view === n.key ? 700 : 500, border: "none", borderBottom: `2px solid ${view === n.key ? T.accent : "transparent"}`, padding: "12px 10px" }}>
-              {n.label}
-            </button>
-          ))}
-        </div>
+    <AppCtx.Provider value={ctx}>
+      <style>{KEYFRAMES}</style>
+      <div style={{ background: `linear-gradient(165deg, ${T.appBg}, ${T.appBg2})`, color: T.text, minHeight: "100vh", fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }}>
+        <BuildingApp />
+        <Toast />
       </div>
-
-      {view === "dashboard" && <Dashboard building={building} role={role} name={profileName} go={setView} />}
-      {view === "announcements" && <Announcements building={building} role={role} profileName={profileName} />}
-      {view === "maintenance" && <Maintenance building={building} role={role} msc={msc} profileName={profileName} />}
-    </div>
-  );
-}
-
-function Dashboard({ building, role, name, go }) {
-  const first = (name || "").split(/[ @]/)[0];
-  return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: "20px 16px 60px" }}>
-      <h2 style={{ marginTop: 0 }}>Welcome back, {first}.</h2>
-      <p style={{ color: T.textMuted, marginTop: -6 }}>You're signed in to {building.name}. Live data, secured to this building.</p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 8 }}>
-        <Card style={{ padding: 16 }}>
-          <div style={{ fontWeight: 700 }}>Announcements</div>
-          <div style={{ color: T.textMuted, fontSize: 14, margin: "6px 0 12px" }}>Notices for the building.</div>
-          <Btn onClick={() => go("announcements")}>Open</Btn>
-        </Card>
-        <Card style={{ padding: 16 }}>
-          <div style={{ fontWeight: 700 }}>Maintenance</div>
-          <div style={{ color: T.textMuted, fontSize: 14, margin: "6px 0 12px" }}>Report and track issues.</div>
-          <Btn onClick={() => go("maintenance")}>Open</Btn>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function NoBuilding({ email, onSignOut }) {
-  return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 16 }}>
-      <Card style={{ padding: 24, maxWidth: 420, textAlign: "center" }}>
-        <h2 style={{ marginTop: 0 }}>You're signed in</h2>
-        <p style={{ color: T.textMuted }}>{email} isn't linked to a building yet. Your committee adds residents by email — once you've been added, this page will show your building automatically.</p>
-        <Btn kind="ghost" onClick={onSignOut}>Sign out</Btn>
-      </Card>
-    </div>
+    </AppCtx.Provider>
   );
 }

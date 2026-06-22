@@ -1,84 +1,63 @@
-# Resident Portal — Production App (live, Supabase-backed)
+# Resident Portal — Production App (your full app, live on Supabase)
 
-A signed-in, multi-building app that reads/writes your Supabase backend. Buildings are isolated by Row-Level Security, so each person only ever sees their own building. This is separate from the no-backend demo file, which stays as-is for pitching.
+This is your **complete** Resident Portal — every module, the wave header, the themes — now behind a magic-link login, loading and saving to your Supabase backend, with each building isolated by Row-Level Security. The single-file demo stays separate for pitching; this is the real product.
 
-Currently wired: **magic-link sign-in**, **building load**, **Announcements**, **Maintenance**. More modules to follow.
+How it works: your whole app is `src/ResidentPortal.jsx` (unchanged). `src/App.jsx` wraps it — it signs the user in, loads their building from Supabase, and routes every change (your app's single `update()`) through `src/db.js` so everything persists.
 
 ---
 
-## 1. Run it locally (optional but recommended first)
+## A. Update the database (one time)
 
-You need Node.js 18+ installed.
+Your earlier schema used typed columns; the full app stores each record whole, so run the v2 schema once.
 
-```bash
-npm install
-cp .env.example .env        # then edit .env with your real values
-npm run dev
-```
+1. Supabase → **SQL Editor** → paste **`supabase-schema-v2.sql`** → Run. (Keeps your profile + platform-admin; rebuilds the data tables.)
+2. New query → paste **`supabase-seed-v2.sql`**, replace `YOUR_SIGNUP_EMAIL` (3 spots) with your email → Run. It creates your building and links you as committee.
+3. The last query should show your building name + your `bcc` membership.
 
-Open the printed local URL (usually http://localhost:5173).
+## B. Set environment variables
 
-Your `.env` needs:
+Local (`.env`) and Netlify both need:
 ```
 VITE_SUPABASE_URL=https://lipwcsihcxndwwgzhiia.supabase.co
 VITE_SUPABASE_ANON_KEY=sb_publishable_...your key...
 ```
-(Use the **Publishable** key from Supabase → Settings → API Keys. Never the secret key.)
 
-> Add `http://localhost:5173` to Supabase → Authentication → URL Configuration → Redirect URLs, or the magic link won't return you to the app locally.
-
-## 2. Put it on GitHub
+## C. Run locally (optional)
 
 ```bash
-git init
-git add .
-git commit -m "Resident Portal production app"
-# create an empty repo on github.com, then:
-git remote add origin https://github.com/YOUR_USER/resident-portal-app.git
-git branch -M main
-git push -u origin main
+npm install
+cp .env.example .env   # fill in your values
+npm run dev
 ```
+Add `http://localhost:5173` to Supabase → Authentication → URL Configuration → Redirect URLs.
 
-## 3. Connect to Netlify (Git-based, auto-deploys)
+## D. Deploy (Git + Netlify)
 
-1. Netlify → **Add new site → Import an existing project** → pick GitHub → choose this repo.
-2. Build settings are auto-detected from `netlify.toml` (build: `npm run build`, publish: `dist`). Leave as-is.
-3. Before the first deploy, add **Environment variables** (Site configuration → Environment variables):
-   - `VITE_SUPABASE_URL` = your project URL
-   - `VITE_SUPABASE_ANON_KEY` = your publishable key
-4. Deploy. Netlify gives you a URL like `https://your-app.netlify.app`.
-5. Add that URL to Supabase → Authentication → URL Configuration (Site URL **and** Redirect URLs).
+Follow **Deploy-Guide-Beginner.md** (unchanged): push to GitHub, import on Netlify, add the two env vars, add the Netlify URL to Supabase Redirect URLs. Every `git push` re-deploys.
 
-From now on, every `git push` redeploys automatically.
+## E. Try it
 
-## 4. Try it
-
-1. Open the Netlify URL → enter the email you seeded as a committee member (e.g. your signup email, which is `bcc` of Salt on Kings) → click the magic link.
-2. You'll land on the dashboard for your building, with live Announcements and Maintenance.
-3. Post a notice and report a maintenance issue — refresh and they persist (they're in Supabase now). Sign in as a different building's member and you won't see them: RLS in action.
+Open the site → enter your email → click the magic link → you land in **your building** with the full app, live. Post a notice, report maintenance, edit settings — refresh and it's all still there (saved in Supabase). Sign in as a member of a different building and you won't see any of it.
 
 ---
 
-## What's here
+## What's wired
+- Magic-link sign-in; loads the signed-in user's building (RLS-isolated).
+- All modules from your app, reading and saving to Supabase via one sync engine.
+- Building isolation + the important role limits enforced in the database (committee-only registers; owners-only notices hidden from tenants; documents committee-only until released).
 
+## Known v1 notes (things to refine after it's running)
+- **Styling uses the Tailwind CDN** (in `index.html`) so there's zero build config. Rock-solid, but for top performance we can switch to a compiled Tailwind build later.
+- **Resident self-edit of own contact details** needs the `update_my_contact` function wired in (committee edits work now). Easy follow-up.
+- **Newly added people** get their real id on the next page refresh (the insert is immediate; the local id reconciles on reload).
+- Member-write modules (maintenance, bookings, events, etc.) allow any member to write within their own building; the finer "only the organiser can edit" rules are enforced in the UI. Can be tightened in the database later.
+
+## Files
 ```
 src/
-  App.jsx                  auth state, building load, nav, dashboard
-  supabaseClient.js        reads VITE_ env vars
-  theme.js                 Midnight Harbour palette
-  components/
-    AnimatedHeader.jsx     your wave header
-    SignIn.jsx             magic-link sign-in
-    ui.jsx                 Card, Btn, Field, Input, etc.
-  modules/
-    Announcements.jsx      live read/post (role-aware)
-    Maintenance.jsx        live raise / triage / progress updates
+  App.jsx            sign-in + load + the saving engine wrapper
+  ResidentPortal.jsx YOUR full app (unchanged except a few exports)
+  db.js              load from / save to Supabase
+  supabaseClient.js  reads the env vars
+  components/SignIn.jsx, AnimatedHeader.jsx, ui.jsx   (sign-in screen)
 ```
-
-## Next modules
-Bookings, Events (+RSVP), Documents, Meetings & decisions, Action register, Directory, Key & fob register, Business directory — each follows the same pattern: query by `building_id`, write through the same RLS rules already enforced in your database.
-
-## Notes
-- This app loads each module's data on demand (not everything at once), so it scales as history grows.
-- Styling is intentionally dependency-light (no Tailwind build step) to keep the build robust.
-- Keep the demo file separate — it remains the no-login pitch tool.
