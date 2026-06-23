@@ -495,7 +495,7 @@ const NAV = [
 ];
 
 export function BuildingApp() {
-  const { T, building, user, view, setView, showGuide, setShowGuide, backend, signOut } = useApp();
+  const { T, building, user, view, setView, showGuide, setShowGuide, backend, signOut, platformAdmin, exitToConsole } = useApp();
   const [navOpen, setNavOpen] = useState(false);
   if (!user) return null;
   if (user.status === "pending") return <PendingScreen />;
@@ -519,6 +519,7 @@ export function BuildingApp() {
             </div>
           ))}
         </nav>
+        {platformAdmin && <button onClick={exitToConsole} className="mx-3 mt-2 rounded-xl px-3 py-2 text-sm font-medium text-left flex items-center gap-2" style={{ color: T.sidebarText, background: hexToRgba(T.accent, 0.16), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}><ChevronLeft size={15} style={{ color: T.accent }} /> All buildings</button>}
         {backend && <button onClick={signOut} className="m-3 rounded-xl px-3 py-2 text-sm font-medium text-left" style={{ color: T.sidebarText, border: `1px solid ${hexToRgba("#ffffff", 0.12)}` }}>Sign out</button>}
       </aside>
       <main className="flex-1 min-w-0 md:ml-64 flex flex-col min-h-screen">

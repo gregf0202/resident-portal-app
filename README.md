@@ -1,63 +1,103 @@
-# Resident Portal — Production App (your full app, live on Supabase)
+# Resident Portal — Setup & Deploy (do this in order)
 
-This is your **complete** Resident Portal — every module, the wave header, the themes — now behind a magic-link login, loading and saving to your Supabase backend, with each building isolated by Row-Level Security. The single-file demo stays separate for pitching; this is the real product.
-
-How it works: your whole app is `src/ResidentPortal.jsx` (unchanged). `src/App.jsx` wraps it — it signs the user in, loads their building from Supabase, and routes every change (your app's single `update()`) through `src/db.js` so everything persists.
+Your full app, signed-in and saving to Supabase, with a platform console to manage buildings. Follow the steps top to bottom. Each step says **where the file comes from** and **where it goes**. Don't skip the checkpoints.
 
 ---
 
-## A. Update the database (one time)
+## What you're working with
 
-Your earlier schema used typed columns; the full app stores each record whole, so run the v2 schema once.
+All of these are **downloaded from the Claude conversation** — each shows up as a file card you click to download. They are separate files (not zipped together):
 
-1. Supabase → **SQL Editor** → paste **`supabase-schema-v2.sql`** → Run. (Keeps your profile + platform-admin; rebuilds the data tables.)
-2. New query → paste **`supabase-seed-v2.sql`**, replace `YOUR_SIGNUP_EMAIL` (3 spots) with your email → Run. It creates your building and links you as committee.
-3. The last query should show your building name + your `bcc` membership.
+| File | Where it comes from | Where it's used |
+|------|--------------------|-----------------|
+| `supabase-schema-v2.sql` | Claude chat (card: *supabase-schema-v2*) | Supabase → SQL Editor |
+| `supabase-seed-v2.sql` | Claude chat (card: *supabase-seed-v2*) | Supabase → SQL Editor |
+| `supabase-admin-console.sql` | Claude chat (card: *supabase-admin-console*) | Supabase → SQL Editor |
+| `resident-portal-app.zip` | Claude chat (card: *resident-portal-app*) | Unzip → upload to GitHub |
 
-## B. Set environment variables
-
-Local (`.env`) and Netlify both need:
-```
-VITE_SUPABASE_URL=https://lipwcsihcxndwwgzhiia.supabase.co
-VITE_SUPABASE_ANON_KEY=sb_publishable_...your key...
-```
-
-## C. Run locally (optional)
-
-```bash
-npm install
-cp .env.example .env   # fill in your values
-npm run dev
-```
-Add `http://localhost:5173` to Supabase → Authentication → URL Configuration → Redirect URLs.
-
-## D. Deploy (Git + Netlify)
-
-Follow **Deploy-Guide-Beginner.md** (unchanged): push to GitHub, import on Netlify, add the two env vars, add the Netlify URL to Supabase Redirect URLs. Every `git push` re-deploys.
-
-## E. Try it
-
-Open the site → enter your email → click the magic link → you land in **your building** with the full app, live. Post a notice, report maintenance, edit settings — refresh and it's all still there (saved in Supabase). Sign in as a member of a different building and you won't see any of it.
+Your two key values (you collected these earlier):
+- **Project URL:** `https://lipwcsihcxndwwgzhiia.supabase.co`
+- **Publishable key:** the `sb_publishable_…` string from Supabase → Settings → API Keys
 
 ---
 
-## What's wired
-- Magic-link sign-in; loads the signed-in user's building (RLS-isolated).
-- All modules from your app, reading and saving to Supabase via one sync engine.
-- Building isolation + the important role limits enforced in the database (committee-only registers; owners-only notices hidden from tenants; documents committee-only until released).
+## PART 1 — Database (in Supabase)
 
-## Known v1 notes (things to refine after it's running)
-- **Styling uses the Tailwind CDN** (in `index.html`) so there's zero build config. Rock-solid, but for top performance we can switch to a compiled Tailwind build later.
-- **Resident self-edit of own contact details** needs the `update_my_contact` function wired in (committee edits work now). Easy follow-up.
-- **Newly added people** get their real id on the next page refresh (the insert is immediate; the local id reconciles on reload).
-- Member-write modules (maintenance, bookings, events, etc.) allow any member to write within their own building; the finer "only the organiser can edit" rules are enforced in the UI. Can be tightened in the database later.
+Go to **supabase.com**, open your project, click **SQL Editor** in the left sidebar. For each script: **+ New query → paste the whole file → Run.**
 
-## Files
-```
-src/
-  App.jsx            sign-in + load + the saving engine wrapper
-  ResidentPortal.jsx YOUR full app (unchanged except a few exports)
-  db.js              load from / save to Supabase
-  supabaseClient.js  reads the env vars
-  components/SignIn.jsx, AnimatedHeader.jsx, ui.jsx   (sign-in screen)
-```
+**Step 1.1 — Run the schema**
+- File: **`supabase-schema-v2.sql`** (from the chat)
+- Paste it into a new query and Run.
+- **Check:** "Success." No red error. (It keeps your login/admin and rebuilds the data tables.)
+
+**Step 1.2 — Seed your building and link your account**
+- File: **`supabase-seed-v2.sql`** (from the chat)
+- Before running: use the editor's find/replace to change every **`YOUR_SIGNUP_EMAIL`** (3 places) to the email you signed up with.
+- Run.
+- **Check:** the last result shows your building name + your `bcc` membership.
+
+**Step 1.3 — Enable the platform console**
+- File: **`supabase-admin-console.sql`** (from the chat)
+- Paste into a new query and Run.
+- **Check:** "Success." (This lets you, as platform admin, see all buildings.)
+
+**Step 1.4 — Allow your website to sign people in**
+- Supabase → **Authentication → URL Configuration**.
+- **Site URL** and **Redirect URLs** must both include: `https://resident-portal-app.netlify.app`
+- Save. *(Without this, the magic-link email won't return people to the app.)*
+
+---
+
+## PART 2 — The app code (in GitHub)
+
+**Step 2.1 — Unzip the app**
+- File: **`resident-portal-app.zip`** (from the chat).
+- Mac: double-click. Windows: right-click → Extract All.
+- You get a folder with `index.html`, `package.json`, `netlify.toml`, `vite.config.js`, `README.md`, and a `src` folder.
+
+**Step 2.2 — Replace the old files in GitHub**
+- Go to your repo at **github.com/gregf0202/resident-portal-app**.
+- Click **Add file → Upload files**.
+- Open the unzipped folder, select **everything inside it** (including the `src` folder) and drag it all onto the upload area.
+- Wait until the list shows files like `src/ResidentPortal.jsx`, `src/db.js`, `src/components/PlatformConsole.jsx`.
+- Scroll down → **Commit changes**. (Same-named files overwrite the old ones.)
+- **Check:** refresh the repo — open `README.md`; it should be *this* file ("do this in order").
+
+---
+
+## PART 3 — Hosting (in Netlify)
+
+**Step 3.1 — Confirm the environment variables**
+- Netlify → your site (**resident-portal-app**) → **Site configuration → Environment variables**.
+- You should see these two (you already added them — leave as-is, don't duplicate):
+  - `VITE_SUPABASE_URL` = `https://lipwcsihcxndwwgzhiia.supabase.co`
+  - `VITE_SUPABASE_ANON_KEY` = your `sb_publishable_…` key
+- If either is missing, click **Add a variable** and add it.
+
+**Step 3.2 — Let it deploy**
+- Your GitHub commit auto-triggers a build. Netlify → **Deploys**.
+- **Check:** newest deploy goes **Building → Published** (green). If it says **Failed**, open it, copy the red lines, and send them to me.
+
+---
+
+## PART 4 — Use it
+
+1. Open **https://resident-portal-app.netlify.app**.
+2. Enter your email → **Email me a sign-in link** → open the email → click the link.
+3. Because you're the platform admin, you land on the **Platform console**:
+   - **Create a building**, or **Open** the one the seed created.
+   - **Members** → invite people by email with a role.
+   - Inside a building, **All buildings** (sidebar) brings you back.
+4. **Check it saves:** post a notice or report maintenance, then refresh — it's still there.
+
+---
+
+## If something goes wrong
+- **Deploy "Failed":** Netlify → the deploy → Deploy log → copy the red lines → send to me.
+- **Blank screen / "Missing VITE_…":** the two env variables aren't set or are misnamed. Fix, then re-deploy (Deploys → Trigger deploy).
+- **Magic link does nothing:** the Netlify URL isn't in Supabase → Authentication → URL Configuration → Redirect URLs (Step 1.4).
+- **Signed in but "no building":** your email isn't linked. Re-check Step 1.2 used your real email, or add yourself via the console.
+
+## Notes
+- Styling uses the Tailwind CDN (in `index.html`) for zero build config — robust now; can be compiled later for speed.
+- The single-file demo (`nalohub.netlify.app`) is separate and untouched — keep using it for pitching.

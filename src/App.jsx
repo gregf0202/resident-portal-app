@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient.js";
 import SignIn from "./components/SignIn.jsx";
+import PlatformConsole from "./components/PlatformConsole.jsx";
 import { AppCtx, BuildingApp, Toast, themeById } from "./ResidentPortal.jsx";
-import { loadStore, persistChange } from "./db.js";
+import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange } from "./db.js";
 
 const KEYFRAMES = `
   @keyframes rpsun { 0%,100% { opacity:.75; transform:scale(1) } 50% { opacity:1; transform:scale(1.06) } }
@@ -17,16 +18,14 @@ const KEYFRAMES = `
   @media (prefers-reduced-motion: reduce) { .rp-anim, .rp-twinkle, .rp-fade { animation: none !important; } }
 `;
 
-function Splash({ text }) {
-  return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: "#9fb2c8", background: "linear-gradient(165deg, #0a1019, #0c1320)", padding: 24, textAlign: "center", fontFamily: "system-ui, sans-serif" }}>{text}</div>;
-}
-
+const SBG = "linear-gradient(165deg, #0a1019, #0c1320)";
+function Splash({ text }) { return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: "#9fb2c8", background: SBG, padding: 24, textAlign: "center", fontFamily: "system-ui, sans-serif" }}>{text}</div>; }
 function NoBuilding({ email, onSignOut }) {
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(165deg, #0a1019, #0c1320)", color: "#e6edf5", padding: 24, fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: SBG, color: "#e6edf5", padding: 24, fontFamily: "system-ui, sans-serif" }}>
       <div style={{ maxWidth: 420, textAlign: "center", background: "#101d30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: 24 }}>
         <h2 style={{ marginTop: 0 }}>You're signed in</h2>
-        <p style={{ color: "#9fb2c8" }}>{email} isn't linked to a building yet. Your committee adds residents by email — once you've been added, your building will appear here automatically.</p>
+        <p style={{ color: "#9fb2c8" }}>{email} isn't linked to a building yet. Once your committee adds you by email, your building appears here automatically.</p>
         <button onClick={onSignOut} style={{ background: "transparent", color: "#e6edf5", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "8px 14px" }}>Sign out</button>
       </div>
     </div>
@@ -35,13 +34,15 @@ function NoBuilding({ email, onSignOut }) {
 
 export default function App() {
   const [session, setSession] = useState(undefined);
+  const [profile, setProfile] = useState(null);
+  const [myMems, setMyMems] = useState([]);
+  const [mode, setMode] = useState("boot"); // boot | console | building | nobuilding
   const [store, setStore] = useState(null);
   const [buildingId, setBuildingId] = useState(null);
   const [userId, setUserId] = useState(null);
   const [view, setView] = useState("dashboard");
   const [toast, setToast] = useState(null);
   const [showGuide, setShowGuide] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -51,46 +52,56 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session) { setStore(null); return; }
+    if (!session) { setMode("boot"); setStore(null); setProfile(null); return; }
     let cancelled = false;
     (async () => {
-      setLoading(true); setErr("");
+      setMode("boot"); setErr("");
       try {
-        const { store: st, buildingId: bid, currentUserId } = await loadStore(session.user);
+        const prof = await loadProfile(session.user);
+        const mems = await loadMyMemberships(session.user);
         if (cancelled) return;
-        setStore(st); setBuildingId(bid); setUserId(currentUserId);
-      } catch (e) {
-        if (!cancelled) setErr(e.message || String(e));
-      }
-      if (!cancelled) setLoading(false);
+        setProfile(prof); setMyMems(mems);
+        if (prof.is_platform_admin) { setMode("console"); return; }
+        if (mems.length) { await enterBuilding(mems[0].building_id); return; }
+        setMode("nobuilding");
+      } catch (e) { if (!cancelled) { setErr(e.message || String(e)); setMode("nobuilding"); } }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line
   }, [session]);
 
+  const enterBuilding = async (bid) => {
+    setMode("boot"); setErr("");
+    try {
+      const { store: st, buildingId: id, currentUserId } = await loadBuildingStore(bid, session.user);
+      setStore(st); setBuildingId(id); setUserId(currentUserId); setView("dashboard"); setMode("building");
+    } catch (e) { setErr(e.message || String(e)); setMode(profile?.is_platform_admin ? "console" : "nobuilding"); }
+  };
+
   const flash = (m) => { setToast(m); window.clearTimeout(window.__t); window.__t = window.setTimeout(() => setToast(null), 2600); };
-  const update = (fn) => setStore((s) => {
-    const n = structuredClone(s);
-    fn(n);
-    persistChange(s, n, buildingId).catch((e) => { console.error("Save failed:", e); flash("Couldn't save — check your connection"); });
-    return n;
-  });
+  const update = (fn) => setStore((s) => { const n = structuredClone(s); fn(n); persistChange(s, n, buildingId).catch((e) => { console.error("Save failed:", e); flash("Couldn't save — check your connection"); }); return n; });
   const signOut = () => supabase.auth.signOut();
-  const openBuilding = (bid) => { setBuildingId(bid); setView("dashboard"); };
+  const exitToConsole = () => { setStore(null); setMode("console"); };
+  const openBuilding = (bid) => enterBuilding(bid);
 
-  if (session === undefined) return <Splash text="Loading…" />;
+  if (session === undefined || mode === "boot") return <Splash text="Loading…" />;
   if (!session) return <SignIn />;
-  if (loading) return <Splash text="Loading your building…" />;
-  if (err) return <Splash text={"Couldn't load: " + err} />;
-  if (!store || !store.buildings.length) return <NoBuilding email={session.user.email} onSignOut={signOut} />;
+  if (mode === "nobuilding") return <NoBuilding email={session.user.email} onSignOut={signOut} />;
+  if (mode === "console") {
+    return <PlatformConsole authUser={session.user} profileName={profile?.full_name || session.user.email} onOpen={openBuilding} onSignOut={signOut} />;
+  }
 
+  // building mode
+  if (!store || !store.buildings.length) return <Splash text={err ? "Couldn't load: " + err : "Loading…"} />;
   const building = store.buildings.find((b) => b.id === buildingId) || store.buildings[0];
   const user = store.users.find((u) => u.id === userId) || null;
   const T = themeById(building && building.themeId);
+  const platformAdmin = !!(profile && profile.is_platform_admin);
 
   const ctx = {
     store, update, T, building, buildingId, setBuildingId, user, userId, setUserId,
     view, setView, toast, flash, openBuilding, showGuide, setShowGuide,
-    backend: true, signOut,
+    backend: true, signOut, platformAdmin, exitToConsole,
   };
 
   return (
