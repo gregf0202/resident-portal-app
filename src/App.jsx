@@ -84,8 +84,9 @@ export default function App() {
   const exitToConsole = () => { setStore(null); setMode("console"); };
   const openBuilding = (bid) => enterBuilding(bid);
 
-  if (session === undefined || mode === "boot") return <Splash text="Loading…" />;
+  if (session === undefined) return <Splash text="Loading…" />;
   if (!session) return <SignIn />;
+  if (mode === "boot") return <Splash text="Loading…" />;
   if (mode === "nobuilding") return <NoBuilding email={session.user.email} onSignOut={signOut} />;
   if (mode === "console") {
     return <PlatformConsole authUser={session.user} profileName={profile?.full_name || session.user.email} onOpen={openBuilding} onSignOut={signOut} />;
