@@ -101,3 +101,31 @@ Go to **supabase.com**, open your project, click **SQL Editor** in the left side
 ## Notes
 - Styling uses the Tailwind CDN (in `index.html`) for zero build config — robust now; can be compiled later for speed.
 - The single-file demo (`nalohub.netlify.app`) is separate and untouched — keep using it for pitching.
+
+
+---
+
+## Billing (Platform console → per building → Billing)
+
+Run **`supabase-billing.sql`** once in the Supabase SQL editor (after the schema and admin-console scripts). It adds the tier catalogue, a per-building billing config, and an invoices table — and lets each building's committee *see* their own billing and invoices, while only you (platform admin) can change them.
+
+Then, in the app: open the Platform console, click **Billing** on any building. You can:
+- edit the three tier prices (platform-wide),
+- set this building's tier, cycle (monthly/quarterly/annual), commitment term and discounts, special discount, referral free months, service start and first-billing date (for pro-rata), payment terms, GST and currency,
+- see a live, itemised preview of the first (pro-rata) and recurring invoices,
+- **Issue** an invoice (saved as a draft record), then mark it **sent / paid** or **void**.
+
+No card data is stored. Payment capture (e.g. Stripe) is a later add-on; these invoice records are shaped to hand off to it.
+
+
+---
+
+## Invoices as real PDFs + customer access
+
+Run **`supabase-invoicing.sql`** once (after `supabase-billing.sql`). It stores your business/payment details and adds a per-invoice snapshot so old PDFs stay correct.
+
+**You (admin):** Platform console → Billing → *Edit business details* — enter NaloHub's trading name, ABN, address, email, phone and **payment instructions** (bank/BPAY/pay link). These print on every invoice. Each invoice (preview or issued) has a **PDF** button that downloads a branded tax invoice you can email.
+
+**The customer (committee):** inside their building they get a **Billing** menu item showing **Outstanding** and **History** invoices, each with a **PDF** download. Only committee/admin roles see it; residents and tenants do not.
+
+PDF generation is built in (jspdf) — `npm install` on Netlify picks it up automatically. Still no card data stored; payment capture (Stripe) remains a later add-on.

@@ -1,7 +1,7 @@
 import React, { useState, useContext, createContext, useMemo, useEffect } from "react";
 import {
   Megaphone, Wrench, CalendarDays, CalendarCheck, Image as ImageIcon, ShoppingBag,
-  MessageSquare, FileText, Users, ClipboardCheck, Plus, X, Check, ChevronRight, ChevronLeft,
+  MessageSquare, FileText, Receipt, Users, ClipboardCheck, Plus, X, Check, ChevronRight, ChevronLeft,
   ArrowLeft, Menu, Building2, Settings, Car, ArrowUpDown, Flame, MapPin, Pin, UserPlus,
   AlertCircle, Clock as ClockIcon, Lock, LayoutDashboard, Mail, Eye, Home, Sparkles, Upload, Paperclip,
   Tag, Calendar, Phone, RefreshCw, Sofa, Dumbbell, FolderOpen, Trash2,
@@ -491,6 +491,7 @@ const NAV = [
   { key: "meetings", label: "Meetings", icon: Gavel, group: "building", show: (r) => r !== "tenant" },
   { key: "keyfobs", label: "Key & Fob Register", icon: KeyRound, group: "building", show: (r) => isCommittee(r) },
   { key: "firesafety", label: "Fire Safety", icon: ShieldAlert, group: "building", show: () => true },
+  { key: "billing", label: "Billing", icon: Receipt, group: "building", show: (r) => isCommittee(r) },
   { key: "settings", label: "Settings", icon: Settings, group: "building", show: () => true },
 ];
 
@@ -499,7 +500,7 @@ export function BuildingApp() {
   const [navOpen, setNavOpen] = useState(false);
   if (!user) return null;
   if (user.status === "pending") return <PendingScreen />;
-  const visible = NAV.filter((n) => n.show(user.role) && moduleOn(building, n.key) && (user.role !== "strata" || ["dashboard", "announcements"].includes(n.key)));
+  const visible = NAV.filter((n) => n.show(user.role) && moduleOn(building, n.key) && (n.key !== "billing" || backend) && (user.role !== "strata" || ["dashboard", "announcements"].includes(n.key)));
   const go = (v) => { setView(v); setNavOpen(false); };
   return (
     <div className="flex">
@@ -579,10 +580,47 @@ function Head({ title, sub, action, onBack, backLabel }) {
 const Wrap = ({ children }) => <div className="max-w-4xl mx-auto px-5 sm:px-8 py-6 space-y-4">{children}</div>;
 function HeaderAction({ children, onClick }) { return <button onClick={onClick} className="bg-white/18 hover:bg-white/28 text-white text-sm font-semibold px-3.5 py-2 rounded-xl inline-flex items-center gap-1.5">{children}</button>; }
 
+// ---------- billing (customer-facing invoices) -----------------------------
+function Billing() {
+  const { T, billing } = useApp();
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let on = true;
+    (async () => { try { const r = billing ? await billing.list() : []; if (on) setRows(r); } catch (e) { if (on) setRows([]); } if (on) setLoading(false); })();
+    return () => { on = false; };
+  }, []);
+  const fmt = (n, c) => new Intl.NumberFormat("en-AU", { style: "currency", currency: c || "AUD" }).format(n || 0);
+  const SC = { draft: T.textMuted, sent: T.accent, paid: "#34d399", overdue: "#f87171", void: "#6b7280" };
+  const outstanding = rows.filter((v) => ["draft", "sent", "overdue"].includes(v.status));
+  const history = rows.filter((v) => ["paid", "void"].includes(v.status));
+  const Row = (v) => (
+    <div key={v.id} className="flex items-center gap-3 py-2" style={{ borderBottom: `1px dashed ${T.border}` }}>
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-sm">{v.number} \u00b7 {fmt(v.total, v.currency)}</div>
+        <div className="text-xs" style={{ color: T.textMuted }}>{v.period_start} \u2192 {v.period_end} \u00b7 due {v.due_date}</div>
+      </div>
+      <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: hexToRgba(SC[v.status] || T.accent, 0.16), color: SC[v.status] || T.accent }}>{v.status}</span>
+      <Btn kind="ghost" onClick={() => billing && billing.download(v)}><Download size={15} /> PDF</Btn>
+    </div>
+  );
+  return (
+    <div>
+      <Head title="Billing" sub="Your building's invoices from NaloHub" />
+      {loading ? <Card style={{ padding: 16 }}><div style={{ color: T.textMuted }}>Loading\u2026</div></Card> :
+        rows.length === 0 ? <Card style={{ padding: 16 }}><div style={{ color: T.textMuted }}>No invoices yet.</div></Card> :
+        <>
+          {outstanding.length > 0 && <Card style={{ padding: 16, marginBottom: 12 }}><SectionTitle>Outstanding</SectionTitle>{outstanding.map(Row)}</Card>}
+          {history.length > 0 && <Card style={{ padding: 16 }}><SectionTitle>History</SectionTitle>{history.map(Row)}</Card>}
+        </>}
+    </div>
+  );
+}
+
 // ---------- view router -----------------------------------------------------
 function ViewRouter() {
   const { view } = useApp();
-  const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, bookings: Bookings, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, settings: SettingsView };
+  const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, bookings: Bookings, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, settings: SettingsView };
   const C = map[view] || Dashboard;
   return <C />;
 }

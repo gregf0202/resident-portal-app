@@ -3,7 +3,8 @@ import { supabase } from "./supabaseClient.js";
 import SignIn from "./components/SignIn.jsx";
 import PlatformConsole from "./components/PlatformConsole.jsx";
 import { AppCtx, BuildingApp, Toast, themeById } from "./ResidentPortal.jsx";
-import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange } from "./db.js";
+import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange, loadInvoices, loadPlatformSettings } from "./db.js";
+import { downloadInvoicePdf } from "./invoicePdf.js";
 
 const KEYFRAMES = `
   @keyframes rpsun { 0%,100% { opacity:.75; transform:scale(1) } 50% { opacity:1; transform:scale(1.06) } }
@@ -35,6 +36,7 @@ function NoBuilding({ email, onSignOut }) {
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
+  const [issuer, setIssuer] = useState(null);
   const [myMems, setMyMems] = useState([]);
   const [mode, setMode] = useState("boot"); // boot | console | building | nobuilding
   const [store, setStore] = useState(null);
@@ -75,6 +77,7 @@ export default function App() {
     try {
       const { store: st, buildingId: id, currentUserId } = await loadBuildingStore(bid, session.user);
       setStore(st); setBuildingId(id); setUserId(currentUserId); setView("dashboard"); setMode("building");
+      loadPlatformSettings().then(setIssuer).catch(() => {});
     } catch (e) { setErr(e.message || String(e)); setMode(profile?.is_platform_admin ? "console" : "nobuilding"); }
   };
 
@@ -103,6 +106,10 @@ export default function App() {
     store, update, T, building, buildingId, setBuildingId, user, userId, setUserId,
     view, setView, toast, flash, openBuilding, showGuide, setShowGuide,
     backend: true, signOut, platformAdmin, exitToConsole,
+    billing: {
+      list: () => loadInvoices(buildingId),
+      download: (inv) => downloadInvoicePdf(inv, (inv.meta && inv.meta.issuer) || issuer || {}, (inv.meta && inv.meta.billTo) || { name: building.name, address: building.address }),
+    },
   };
 
   return (

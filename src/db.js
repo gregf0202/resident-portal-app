@@ -151,3 +151,51 @@ export async function persistChange(prev, next, bid) {
   const failed = results.find((r) => r && r.error);
   if (failed) throw failed.error;
 }
+
+// ---- billing ----
+export async function loadTiers() {
+  const { data, error } = await supabase.from("billing_tiers").select("*").order("sort");
+  if (error) throw error;
+  return data || [];
+}
+export async function updateTier(id, fields) {
+  const { error } = await supabase.from("billing_tiers").update(fields).eq("id", id);
+  if (error) throw error;
+}
+export async function loadBuildingBilling(bid) {
+  const { data, error } = await supabase.from("building_billing").select("*").eq("building_id", bid).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+export async function saveBuildingBilling(bid, cfg) {
+  const row = { ...cfg, building_id: bid, updated_at: new Date().toISOString() };
+  const { error } = await supabase.from("building_billing").upsert(row);
+  if (error) throw error;
+}
+export async function loadInvoices(bid) {
+  const { data, error } = await supabase.from("invoices").select("*").eq("building_id", bid).order("issue_date", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function createInvoice(bid, inv) {
+  const { error } = await supabase.from("invoices").insert({ building_id: bid, ...inv });
+  if (error) throw error;
+}
+export async function setInvoiceStatus(id, status) {
+  const patch = { status };
+  if (status === "sent") patch.sent_at = new Date().toISOString();
+  if (status === "paid") patch.paid_at = new Date().toISOString();
+  const { error } = await supabase.from("invoices").update(patch).eq("id", id);
+  if (error) throw error;
+}
+
+// ---- platform settings (invoice issuer + payment details) ----
+export async function loadPlatformSettings() {
+  const { data, error } = await supabase.from("platform_settings").select("data").eq("id", "singleton").maybeSingle();
+  if (error) throw error;
+  return (data && data.data) || {};
+}
+export async function savePlatformSettings(d) {
+  const { error } = await supabase.from("platform_settings").upsert({ id: "singleton", data: d, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}

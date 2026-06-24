@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { T } from "../theme.js";
 import AnimatedHeader from "./AnimatedHeader.jsx";
 import { Card, Btn, Field, Input, Select, Badge, Empty } from "./ui.jsx";
+import BillingPanel from "./BillingPanel.jsx";
 import { loadAllBuildings, createBuilding, joinAsAdmin, listMembers, addMember, updateMemberRole, removeMember } from "../db.js";
 
 const ROLES = [["bcc", "Committee"], ["admin", "Administrator"], ["manager", "Building manager"], ["strata", "Strata manager"], ["owner", "Owner"], ["tenant", "Tenant"]];
@@ -13,6 +14,7 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
   const [showNew, setShowNew] = useState(false);
   const [nf, setNf] = useState({ name: "", address: "", units: "", floors: "", towers: "1", themeId: "midnight" });
   const [managing, setManaging] = useState(null); // building id whose members panel is open
+  const [billingFor, setBillingFor] = useState(null); // building id whose billing panel is open
 
   const refresh = async () => {
     setLoading(true); setErr("");
@@ -78,9 +80,11 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
                 </div>
                 <Badge color={T.accent}>{b.members} member{b.members === 1 ? "" : "s"}</Badge>
                 <Btn kind="ghost" onClick={() => setManaging(managing === b.id ? null : b.id)}>Members</Btn>
+                <Btn kind="ghost" onClick={() => setBillingFor(billingFor === b.id ? null : b.id)}>Billing</Btn>
                 <Btn onClick={() => open(b)}>{b.isMember ? "Open" : "Join & open"}</Btn>
               </div>
               {managing === b.id && <MembersPanel bid={b.id} onChanged={refresh} />}
+              {billingFor === b.id && <BillingPanel bid={b.id} building={{ name: b.name, address: b.address }} />}
             </Card>
           ))}
       </div>
