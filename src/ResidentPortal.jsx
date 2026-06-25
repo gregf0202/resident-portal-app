@@ -6,7 +6,7 @@ import {
   AlertCircle, Clock as ClockIcon, Lock, LayoutDashboard, Mail, Eye, Home, Sparkles, Upload, Paperclip,
   Tag, Calendar, Phone, RefreshCw, Sofa, Dumbbell, FolderOpen, Trash2,
   Sun, Cloud, CloudRain, CloudSun, Gavel, Wind, MessageCircle, Download, Printer, BarChart3,
-  Video, ExternalLink, ListChecks, Vote, KeyRound, ShieldAlert, Store, ThumbsUp, HelpCircle, Pencil,
+  Video, ExternalLink, ListChecks, Vote, KeyRound, ShieldAlert, Search, Store, ThumbsUp, HelpCircle, Pencil,
 } from "lucide-react";
 
 /*
@@ -295,7 +295,7 @@ export default function App() {
   const [userId, setUserId] = useState(demoUser ? demoUser.id : null);
   const [view, setView] = useState("dashboard");
   const [toast, setToast] = useState(null);
-  const [showGuide, setShowGuide] = useState(true);
+  const [showGuide, setShowGuide] = useState(false);
   const update = (fn) => setStore((s) => { const n = structuredClone(s); fn(n); return n; });
   const flash = (m) => { setToast(m); window.clearTimeout(window.__t); window.__t = window.setTimeout(() => setToast(null), 2600); };
   const building = store.buildings.find((b) => b.id === buildingId) || null;
@@ -374,6 +374,7 @@ function LegalModal({ initial, onClose }) {
 // ---------- welcome / guided tour (BCC lens) --------------------------------
 function WelcomeGuide() {
   const { T, building, setShowGuide, setView } = useApp();
+  const close = () => { try { localStorage.setItem("nalo_seen_guide", "1"); } catch (e) {} setShowGuide(false); };
   const steps = [
     { t: "Dashboard", d: "See what a resident lands on — live weather, what's on this month, and one-tap actions." },
     { t: "Announcements", d: "Open a notice. Then switch Viewing as → Strata manager and post a formal AGM notice to owners only." },
@@ -382,7 +383,7 @@ function WelcomeGuide() {
     { t: "Reports", d: "The committee's snapshot. Export the Decisions register as a baseline for your minutes." },
     { t: "Make it yours", d: "In Settings, edit the building name and details — watch the header update — then toggle features on or off." },
   ];
-  return (<div className="fixed inset-0 z-[95] grid place-items-center p-4" onClick={() => setShowGuide(false)}>
+  return (<div className="fixed inset-0 z-[95] grid place-items-center p-4" onClick={close}>
     <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.62)" }} />
     <div className="relative w-full max-w-lg rounded-2xl overflow-hidden flex flex-col" style={{ background: T.surface, color: T.text, border: `1px solid ${T.border}`, maxHeight: "90dvh" }} onClick={(e) => e.stopPropagation()}>
       <div className="shrink-0"><AnimatedHeader><div className="px-5 py-5"><div className="text-[11px] uppercase tracking-[0.2em] text-white/75">Welcome to the demo</div><h2 className="text-xl font-bold mt-1">Take the Committee's Seat</h2><p className="text-white/85 text-sm mt-1.5">You're exploring {building.name} — a fully working portal filled with realistic data. Nothing you do here affects anyone else; reload any time to reset.</p></div></AnimatedHeader></div>
@@ -392,7 +393,7 @@ function WelcomeGuide() {
         <ol className="space-y-3">{steps.map((st, i) => (<li key={i} className="flex gap-3"><span className="h-6 w-6 rounded-full grid place-items-center text-[12px] font-bold shrink-0 text-white" style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})` }}>{i + 1}</span><div><div className="text-sm font-semibold">{st.t}</div><div style={{ color: T.textMuted }} className="text-sm">{st.d}</div></div></li>))}</ol>
         <div className="rounded-xl p-3 mt-4 text-xs" style={{ background: hexToRgba(SEMANTIC.warn, T.mode === "dark" ? 0.14 : 0.1), color: T.textMuted, border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.3)}` }}><b style={{ color: T.text }}>This is a live demo to show capability and value.</b> A few things are illustrative — file uploads, document storage, emails and weather are simulated, and everything resets when you reload. The full version stores real files and data securely.</div>
       </div>
-      <div className="px-5 py-3 flex gap-2 shrink-0" style={{ borderTop: `1px solid ${T.border}` }}><Btn grad onClick={() => setShowGuide(false)} className="flex-1">Start exploring</Btn><Btn kind="ghost" onClick={() => { setView("settings"); setShowGuide(false); }}>Make it ours</Btn></div>
+      <div className="px-5 py-3 flex gap-2 shrink-0" style={{ borderTop: `1px solid ${T.border}` }}><Btn grad onClick={close} className="flex-1">Start exploring</Btn><Btn kind="ghost" onClick={() => { setView("settings"); close(); }}>Make it ours</Btn></div>
     </div>
   </div>);
 }
@@ -473,6 +474,118 @@ function ThemeGrid({ value, onChange }) {
 }
 
 // ---------- building app shell ----------------------------------------------
+
+// ---------- first-run guide (resident onboarding, production) ---------------
+function FirstRunGuide() {
+  const { T, setShowGuide } = useApp();
+  const GREEN = "#34d399";
+  const [i, setI] = useState(0);
+  const close = () => { try { localStorage.setItem("nalo_seen_guide", "1"); } catch (e) {} setShowGuide(false); };
+  const slides = [
+    { safe: true, Icon: Lock, t: "A safe, private place", d: "This portal is just for your building. Only your neighbours and committee are here." },
+    { Icon: Wrench, t: "Something broken?", d: "Tap Maintenance, snap a photo, send. You can follow the progress." },
+    { Icon: Calendar, t: "Book a space", d: "BBQ, visitor parking, the common room — pick a time and you’re done." },
+    { Icon: Megaphone, t: "Stay in the loop", d: "Notices and events come to you. No more missing the lift-wall sign." },
+    { Icon: Eye, t: "You’re in control", d: "Choose what to share. Hide your phone and email any time in Settings." },
+    { Icon: Sparkles, t: "You’re in the Nalo!", d: "Tap Help whenever you need a hand. Welcome aboard." },
+  ];
+  const s = slides[i], last = i === slides.length - 1;
+  const SafeChip = ({ Icon, b, sub }) => (
+    <div className="flex items-center gap-3 rounded-xl px-3 py-3 text-left" style={{ background: hexToRgba(GREEN, 0.12), border: `1px solid ${hexToRgba(GREEN, 0.32)}` }}>
+      <Icon size={18} style={{ color: GREEN, flexShrink: 0 }} />
+      <div><div className="text-sm font-semibold" style={{ color: T.text }}>{b}</div><div className="text-xs" style={{ color: T.textMuted }}>{sub}</div></div>
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 z-[95] grid place-items-center p-4" onClick={close}>
+      <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.62)" }} />
+      <div className="relative w-full max-w-md rounded-2xl overflow-hidden flex flex-col" style={{ background: T.surface, color: T.text, border: `1px solid ${T.border}`, maxHeight: "90dvh" }} onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 relative">
+          <AnimatedHeader><div className="px-5 py-5">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-white/75">Welcome 👋</div>
+            <h2 className="text-xl font-bold mt-1">Get started in 30 seconds</h2>
+            <span className="inline-block mt-2 text-[11px] font-bold px-2.5 py-1 rounded-full" style={{ background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.28)", color: "#fff" }}>Your building, just Nalo it.</span>
+          </div></AnimatedHeader>
+          <button onClick={close} className="absolute top-3 right-3 text-xs font-bold px-3 py-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.18)", color: "#fff" }}>Skip</button>
+        </div>
+        <div className="px-6 py-6 overflow-y-auto flex-1 min-h-0 text-center flex flex-col items-center gap-3">
+          <div className="grid place-items-center rounded-full" style={{ width: s.safe ? 128 : 108, height: s.safe ? 128 : 108, background: s.safe ? hexToRgba(GREEN, 0.14) : hexToRgba(T.accent, 0.16), color: s.safe ? GREEN : T.accent }}><s.Icon size={s.safe ? 58 : 46} /></div>
+          <h3 className="text-xl font-bold" style={{ color: T.text }}>{s.t}</h3>
+          <p className="text-sm" style={{ color: T.textMuted, maxWidth: 280 }}>{s.d}</p>
+          {s.safe && <div className="w-full max-w-xs flex flex-col gap-2 mt-1">
+            <SafeChip Icon={Home} b="Private to your building" sub="Outsiders can’t see anything here" />
+            <SafeChip Icon={Eye} b="You choose what to share" sub="Your details stay hidden unless you say so" />
+            <SafeChip Icon={Lock} b="No password to lose" sub="We email you a secure sign-in link" />
+          </div>}
+        </div>
+        <div className="flex justify-center gap-1.5 py-2">{slides.map((_, k) => <span key={k} className="rounded-full" style={{ width: k === i ? 22 : 8, height: 8, background: k === i ? T.accent : hexToRgba(T.text, 0.18), transition: "all .2s" }} />)}</div>
+        <div className="px-5 py-3 flex gap-2 shrink-0" style={{ borderTop: `1px solid ${T.border}` }}>
+          {i > 0 && <Btn kind="ghost" onClick={() => setI(i - 1)}>Back</Btn>}
+          <Btn grad onClick={() => last ? close() : setI(i + 1)} className="flex-1">{last ? "Finish" : "Next"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Help hub (everyone) --------------------------------------------
+function HelpHub() {
+  const { T, setShowGuide } = useApp();
+  const GREEN = "#34d399";
+  const [term, setTerm] = useState(""); const [cat, setCat] = useState("all"); const [open, setOpen] = useState({});
+  const cats = [["all", "All"], ["safety", "Safe & private"], ["start", "Getting started"], ["report", "Reporting"], ["book", "Bookings"], ["notices", "Notices & docs"], ["account", "Your account"]];
+  const faqs = [
+    { cat: "safety", safe: 1, Icon: Lock, q: "Is my information safe here?", a: "Yes. This portal is private to your building. Only your neighbours and committee can see it — never the public, and never people from other buildings." },
+    { cat: "safety", safe: 1, Icon: Eye, q: "Who can see my phone number?", a: "Nobody, unless you choose to show it. Your phone and email stay hidden by default. You can turn sharing on or off any time in Settings." },
+    { cat: "safety", safe: 1, Icon: Lock, q: "Do I need a password?", a: "No password to create or remember. We email you a secure link — tap it and you’re in. That’s safer than a password you might forget." },
+    { cat: "start", Icon: Home, q: "Do I need to download an app?", a: "No. It opens in your web browser like a website. You can add it to your home screen if you like, but you don’t have to." },
+    { cat: "start", Icon: HelpCircle, q: "I’m not great with technology — is this hard?", a: "Not at all. If you can send a text message, you can use this. Everything is a tap, and Help is always here." },
+    { cat: "report", Icon: Wrench, q: "How do I report something broken?", a: "Tap Maintenance, then New. Describe it in a few words, add a photo if you can, and send. Done." },
+    { cat: "report", Icon: Wrench, q: "Will I know when it’s fixed?", a: "Yes. Your request shows its progress, so you can see when it’s being looked at and when it’s done." },
+    { cat: "book", Icon: Calendar, q: "How do I book the BBQ or common room?", a: "Tap Bookings, choose the space and a time, and confirm. You’ll see your booking in the list." },
+    { cat: "notices", Icon: Megaphone, q: "Where do I read building notices?", a: "Tap Announcements for the latest, and Events for what’s coming up. The important ones also show on your home screen." },
+    { cat: "notices", Icon: FileText, q: "Where are documents like meeting minutes?", a: "Tap Documents. By-laws, minutes and safety info are kept there — tap any one to open it." },
+    { cat: "account", Icon: Settings, q: "How do I change or hide my details?", a: "Tap Settings. You can update your details and choose what (if anything) your neighbours can see." },
+    { cat: "account", Icon: KeyRound, q: "I’ve been logged out — how do I get back in?", a: "Just enter your email again and we’ll send a fresh sign-in link. Nothing is lost." },
+  ];
+  const t = term.toLowerCase();
+  const list = faqs.filter((f) => (cat === "all" || f.cat === cat) && (f.q.toLowerCase().includes(t) || f.a.toLowerCase().includes(t)));
+  const Reassure = ({ Icon, label, green }) => (
+    <div className="rounded-xl px-2 py-3 text-center" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+      <div className="flex justify-center" style={{ color: green ? GREEN : T.accent }}><Icon size={18} /></div>
+      <div className="text-[11px] font-semibold mt-1" style={{ color: T.text }}>{label}</div>
+    </div>
+  );
+  return (
+    <div>
+      <Head title="Get the best of NaloHub" sub="Tap a question for a short answer" action={<Btn kind="ghost" onClick={() => setShowGuide(true)}><HelpCircle size={15} /> Take the tour</Btn>} />
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <Reassure Icon={Home} label="Private to your building" />
+        <Reassure Icon={Eye} label="You control sharing" />
+        <Reassure Icon={Lock} label="No password to lose" green />
+      </div>
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-3" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+        <Search size={16} style={{ color: T.textMuted }} />
+        <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search help…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: T.text }} />
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-1">{cats.map(([k, l]) => (
+        <button key={k} onClick={() => setCat(k)} className="whitespace-nowrap text-xs font-semibold rounded-full px-3 py-1.5" style={k === cat ? { background: T.accent, color: T.mode === "dark" ? "#06283a" : "#fff" } : { background: T.surface, color: T.textMuted, border: `1px solid ${T.border}` }}>{l}</button>
+      ))}</div>
+      {list.length === 0 ? <Card style={{ padding: 16 }}><div style={{ color: T.textMuted }}>No matches — try another word, or tap a category.</div></Card> :
+        list.map((f, idx) => { const isOpen = open[f.q]; const green = f.safe;
+          return (<div key={idx} className="mb-2">
+            <button onClick={() => setOpen((o) => ({ ...o, [f.q]: !o[f.q] }))} className="w-full flex items-center gap-3 rounded-xl px-3 py-3 text-left" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+              <span className="grid place-items-center rounded-lg shrink-0" style={{ width: 34, height: 34, background: green ? hexToRgba(GREEN, 0.14) : hexToRgba(T.accent, 0.16), color: green ? GREEN : T.accent }}><f.Icon size={16} /></span>
+              <span className="flex-1 text-sm font-semibold" style={{ color: T.text }}>{f.q}</span>
+              <ChevronRight size={16} style={{ color: T.textMuted, transform: isOpen ? "rotate(90deg)" : "none", transition: ".2s" }} />
+            </button>
+            {isOpen && <div className="text-sm px-3 pt-2 pb-1" style={{ color: T.textMuted }}>{f.a}</div>}
+          </div>);
+        })}
+    </div>
+  );
+}
+
 const NAV = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "main", show: () => true },
   { key: "announcements", label: "Announcements", icon: Megaphone, group: "main", show: () => true },
@@ -491,20 +604,22 @@ const NAV = [
   { key: "meetings", label: "Meetings", icon: Gavel, group: "building", show: (r) => r !== "tenant" },
   { key: "keyfobs", label: "Key & Fob Register", icon: KeyRound, group: "building", show: (r) => isCommittee(r) },
   { key: "firesafety", label: "Fire Safety", icon: ShieldAlert, group: "building", show: () => true },
+  { key: "help", label: "Help", icon: HelpCircle, group: "building", show: () => true },
   { key: "billing", label: "Billing", icon: Receipt, group: "building", show: (r) => isCommittee(r) },
   { key: "settings", label: "Settings", icon: Settings, group: "building", show: () => true },
 ];
 
 export function BuildingApp() {
   const { T, building, user, view, setView, showGuide, setShowGuide, backend, signOut, platformAdmin, exitToConsole } = useApp();
+  React.useEffect(() => { try { if (!localStorage.getItem("nalo_seen_guide")) setShowGuide(true); } catch (e) {} }, []);
   const [navOpen, setNavOpen] = useState(false);
   if (!user) return null;
   if (user.status === "pending") return <PendingScreen />;
-  const visible = NAV.filter((n) => n.show(user.role) && moduleOn(building, n.key) && (n.key !== "billing" || backend) && (user.role !== "strata" || ["dashboard", "announcements"].includes(n.key)));
+  const visible = NAV.filter((n) => n.show(user.role) && moduleOn(building, n.key) && (n.key !== "billing" || backend) && (user.role !== "strata" || ["dashboard", "announcements", "help"].includes(n.key)));
   const go = (v) => { setView(v); setNavOpen(false); };
   return (
     <div className="flex">
-      {showGuide && <WelcomeGuide />}
+      {showGuide && (backend ? <FirstRunGuide /> : <WelcomeGuide />)}
       {navOpen && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setNavOpen(false)} />}
       <aside className={`fixed z-40 top-0 left-0 h-full w-64 flex flex-col transition-transform duration-200 ${navOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`} style={{ background: T.sidebar, color: T.sidebarText }}>
         <BuildingBrand go={go} />
@@ -597,8 +712,8 @@ function Billing() {
   const Row = (v) => (
     <div key={v.id} className="flex items-center gap-3 py-2" style={{ borderBottom: `1px dashed ${T.border}` }}>
       <div className="flex-1 min-w-0">
-        <div className="font-semibold text-sm">{v.number} \u00b7 {fmt(v.total, v.currency)}</div>
-        <div className="text-xs" style={{ color: T.textMuted }}>{v.period_start} \u2192 {v.period_end} \u00b7 due {v.due_date}</div>
+        <div className="font-semibold text-sm">{v.number} · {fmt(v.total, v.currency)}</div>
+        <div className="text-xs" style={{ color: T.textMuted }}>{v.period_start} → {v.period_end} · due {v.due_date}</div>
       </div>
       <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: hexToRgba(SC[v.status] || T.accent, 0.16), color: SC[v.status] || T.accent }}>{v.status}</span>
       <Btn kind="ghost" onClick={() => billing && billing.download(v)}><Download size={15} /> PDF</Btn>
@@ -607,7 +722,7 @@ function Billing() {
   return (
     <div>
       <Head title="Billing" sub="Your building's invoices from NaloHub" />
-      {loading ? <Card style={{ padding: 16 }}><div style={{ color: T.textMuted }}>Loading\u2026</div></Card> :
+      {loading ? <Card style={{ padding: 16 }}><div style={{ color: T.textMuted }}>Loading…</div></Card> :
         rows.length === 0 ? <Card style={{ padding: 16 }}><div style={{ color: T.textMuted }}>No invoices yet.</div></Card> :
         <>
           {outstanding.length > 0 && <Card style={{ padding: 16, marginBottom: 12 }}><SectionTitle>Outstanding</SectionTitle>{outstanding.map(Row)}</Card>}
@@ -620,7 +735,7 @@ function Billing() {
 // ---------- view router -----------------------------------------------------
 function ViewRouter() {
   const { view } = useApp();
-  const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, bookings: Bookings, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, settings: SettingsView };
+  const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, bookings: Bookings, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, help: HelpHub, settings: SettingsView };
   const C = map[view] || Dashboard;
   return <C />;
 }
@@ -847,7 +962,7 @@ function Maintenance() {
           <div className="flex gap-2"><Btn grad onClick={raise}>Submit report</Btn><Btn kind="ghost" onClick={() => setRaising(false)}>Cancel</Btn></div>
         </div></Card>)}
         {canTriage && byCat.length > 0 && (<Card style={{ padding: 16 }}><SectionTitle>By category — spot the recurring ones</SectionTitle><div className="flex flex-wrap gap-2">{byCat.map((x) => <Badge key={x.c} color={T.accent}>{x.c}: {x.n}</Badge>)}</div></Card>)}
-        {list.length === 0 && <Empty icon={Wrench} title="No issues reported" hint="Spotted something in a shared area? Report it." />}
+        {list.length === 0 && <Empty icon={Wrench} title="No issues reported" hint="Spotted something in a shared area? Just Nalo it." />}
         {list.map((m) => { const st = M_STATUS[m.status]; return (
           <button key={m.id} onClick={() => setOpen(m.id)} className="w-full text-left"><Card hover style={{ padding: 14 }}><div className="flex items-center gap-3">{m.image ? <img src={m.image} alt="" className="h-12 w-12 rounded-xl object-cover shrink-0" /> : <div className="h-12 w-12 rounded-xl grid place-items-center shrink-0" style={{ background: hexToRgba(T.accent, T.mode === "dark" ? 0.2 : 0.12), color: T.accent }}><Wrench size={18} /></div>}<div className="flex-1 min-w-0"><div className="font-semibold truncate">{m.title}</div><div style={{ color: T.textMuted }} className="text-xs mt-0.5">{m.category} · {fmtDate(m.date)}{m.resolutions.length > 0 ? ` · ${m.resolutions.length} note(s)` : ""}</div></div><Badge color={st.c}>{st.label}</Badge><ChevronRight size={16} style={{ color: T.textMuted }} /></div></Card></button>
         ); })}
@@ -879,7 +994,7 @@ function Bookings() {
           <Btn grad onClick={book}>{fac === "visitor" && nights > 1 ? "Request booking" : "Confirm booking"}</Btn>
         </div></Card>
         <SectionTitle>{isApprover(user.role) ? "All bookings" : "Your bookings"}</SectionTitle>
-        {mine.length === 0 && <Empty icon={CalendarCheck} title="Nothing booked yet" />}
+        {mine.length === 0 && <Empty icon={CalendarCheck} title="Nothing booked yet" hint="Pick a space and Nalo it when you’re ready." />}
         {mine.map((b) => { const M = FAC_META[b.facility]; const stc = b.status === "pending" ? SEMANTIC.warn : b.status === "declined" ? SEMANTIC.bad : SEMANTIC.ok; return (
           <Card key={b.id} style={{ padding: 16 }}><div className="flex items-center gap-3"><div className="h-10 w-10 rounded-xl grid place-items-center shrink-0 text-white" style={{ background: `linear-gradient(135deg, ${HUE.bookings[0]}, ${HUE.bookings[1]})` }}><M.icon size={18} /></div><div className="flex-1 min-w-0"><div className="font-semibold">{M.label}</div><div style={{ color: T.textMuted }} className="text-xs">{b.facility === "visitor" ? `${fmtDate(b.fromDate)} → ${fmtDate(b.toDate)}` : `${fmtDate(b.fromDate)}${b.timeFrom ? ` · ${b.timeFrom}–${b.timeTo}` : ""}`} · {b.bookedBy}</div></div><Badge color={stc}>{b.status === "pending" ? "Pending" : b.status === "declined" ? "Declined" : "Confirmed"}</Badge></div>{b.decidedBy && <div style={{ color: T.textMuted, borderTop: `1px solid ${T.border}` }} className="text-xs mt-3 pt-2.5">{b.status === "confirmed" ? "Approved" : "Declined"} by {b.decidedBy} · {fmtDate(b.decidedAt)}{b.decisionNote && ` — “${b.decisionNote}”`}</div>}</Card>
         ); })}

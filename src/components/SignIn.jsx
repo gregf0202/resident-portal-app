@@ -31,6 +31,10 @@ export default function SignIn() {
           </div>
         </AnimatedHeader>
         <div style={{ padding: 24 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(52,211,153,0.14)", border: "1px solid rgba(52,211,153,0.34)", color: "#34d399", fontSize: 13, fontWeight: 700, padding: "9px 14px", borderRadius: 30, marginBottom: 14 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="10.5" width="16" height="10" rx="2.5" /><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" /><circle cx="12" cy="15.5" r="1.4" /></svg>
+            A private, secure space just for your building
+          </div>
           {sent ? (
             <div>
               <p style={{ color: T.text, marginTop: 0 }}>Check your email — we've sent a sign-in link to <b>{email}</b>. Open it on this device to continue.</p>
@@ -46,6 +50,7 @@ export default function SignIn() {
               <Btn onClick={send} disabled={busy} style={{ marginTop: 12, width: "100%" }}>
                 {busy ? "Sending…" : "Email me a sign-in link"}
               </Btn>
+              <div style={{ textAlign: "center", marginTop: 12, color: T.accent, fontWeight: 800, fontSize: 12, letterSpacing: 0.4 }}>Just Nalo it.</div>
             </div>
           )}
         </div>
