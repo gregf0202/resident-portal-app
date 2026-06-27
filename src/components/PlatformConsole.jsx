@@ -3,7 +3,8 @@ import { T } from "../theme.js";
 import AnimatedHeader from "./AnimatedHeader.jsx";
 import { Card, Btn, Field, Input, Select, Badge, Empty } from "./ui.jsx";
 import BillingPanel from "./BillingPanel.jsx";
-import { loadAllBuildings, createBuilding, joinAsAdmin, listMembers, addMember, updateMemberRole, removeMember } from "../db.js";
+import { loadAllBuildings, createBuilding, joinAsAdmin, listMembers, addMember, addMembersBulk, updateMember, removeMember, sendInvite, sendInvites } from "../db.js";
+import { parseCSV, toCSV, downloadCSV, readFileText } from "../csv.js";
 
 const ROLES = [["bcc", "Committee"], ["admin", "Administrator"], ["manager", "Building manager"], ["strata", "Strata manager"], ["owner", "Owner"], ["tenant", "Tenant"]];
 
@@ -92,37 +93,144 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
   );
 }
 
+const USER_CSV_HEADERS = ["email", "full_name", "unit", "role"];
+
+// Derive a friendly access state from a member row.
+function memberState(u) {
+  if (u.status === "active") return { key: "access", label: "User has access", color: "#34d399" };
+  if (u.invited_at) return { key: "invited", label: "Invite sent", color: "#fbbf24" };
+  return { key: "new", label: "Not invited", color: "#9fb2c8" };
+}
+
 function MembersPanel({ bid, onChanged }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
   const [m, setM] = useState({ email: "", full_name: "", role: "owner", unit: "" });
+  const [editId, setEditId] = useState(null);          // member being edited
+  const [ed, setEd] = useState({ email: "", full_name: "", role: "owner", unit: "" });
 
   const load = async () => { setLoading(true); try { setMembers(await listMembers(bid)); } catch (e) { setErr(e.message); } setLoading(false); };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [bid]);
 
-  const add = async () => { if (!m.email.trim()) return; try { await addMember(bid, m); setM({ email: "", full_name: "", role: "owner", unit: "" }); await load(); onChanged && onChanged(); } catch (e) { setErr(e.message); } };
-  const setRole = async (id, role) => { try { await updateMemberRole(id, role); await load(); } catch (e) { setErr(e.message); } };
+  const flash = (msg) => { setNote(msg); setErr(""); window.clearTimeout(window.__mp); window.__mp = window.setTimeout(() => setNote(""), 4000); };
+
+  const add = async () => {
+    if (!m.email.trim()) return;
+    setBusy(true); setErr("");
+    try {
+      await addMember(bid, m);
+      setM({ email: "", full_name: "", role: "owner", unit: "" });
+      await load(); onChanged && onChanged();
+      flash("Member added (no email sent). Use Send invite when you're ready.");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const startEdit = (u) => { setEditId(u.id); setEd({ email: u.email || "", full_name: u.full_name || "", role: u.role || "owner", unit: u.unit || "" }); };
+  const cancelEdit = () => { setEditId(null); };
+  const saveEdit = async (id) => {
+    setBusy(true); setErr("");
+    try { await updateMember(id, ed); setEditId(null); await load(); onChanged && onChanged(); flash("Member updated"); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const invite = async (u) => {
+    setBusy(true); setErr("");
+    const res = await sendInvite(u);
+    await load();
+    setBusy(false);
+    flash(res.ok ? `Invite sent to ${u.email}` : `Couldn't send: ${res.reason}`);
+  };
+  const inviteAll = async () => {
+    const pending = members.filter((u) => u.status !== "active");
+    if (!pending.length) { flash("Everyone already has access."); return; }
+    setBusy(true); setErr("");
+    const { sent, failures } = await sendInvites(pending);
+    await load();
+    setBusy(false);
+    flash(`${sent} invite(s) sent${failures.length ? ` · ${failures.length} failed` : ""}.`);
+  };
   const remove = async (id) => { try { await removeMember(id); await load(); onChanged && onChanged(); } catch (e) { setErr(e.message); } };
+
+  const downloadTemplate = () => {
+    const sample = [
+      { email: "owner@example.com", full_name: "Jane Owner", unit: "12", role: "owner" },
+      { email: "tenant@example.com", full_name: "Sam Tenant", unit: "12", role: "tenant" },
+    ];
+    downloadCSV("nalohub-users-template.csv", toCSV(USER_CSV_HEADERS, sample));
+  };
+  const onUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // allow re-selecting same file
+    if (!file) return;
+    setBusy(true); setErr("");
+    try {
+      const rows = parseCSV(await readFileText(file));
+      const valid = ROLES.map(([v]) => v);
+      const cleaned = rows.map((r) => ({
+        email: r.email || "",
+        full_name: r.full_name || r.name || "",
+        unit: r.unit || "",
+        role: valid.includes((r.role || "").toLowerCase()) ? r.role.toLowerCase() : "owner",
+      })).filter((r) => r.email.trim());
+      if (!cleaned.length) { setErr("No rows with an email found. Check the file matches the template."); setBusy(false); return; }
+      const { added, skipped } = await addMembersBulk(bid, cleaned);
+      await load(); onChanged && onChanged();
+      flash(`${added} added${skipped ? `, ${skipped} skipped (duplicates/blank)` : ""}. No emails sent — send invites when ready.`);
+    } catch (e) { setErr(e.message || String(e)); }
+    setBusy(false);
+  };
+
+  const labelBtn = { display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", background: T.surface, color: T.text, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 12px", fontSize: 13, fontWeight: 600 };
 
   return (
     <div style={{ marginTop: 14, borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
       {err && <div style={{ color: "#f87171", fontSize: 13, marginBottom: 8 }}>{err}</div>}
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: T.textMuted, marginBottom: 8 }}>Members & invites</div>
-      {loading ? <div style={{ color: T.textMuted }}>Loading…</div> : members.map((u) => (
-        <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 160 }}>
-            <div style={{ fontSize: 14 }}>{u.full_name || u.email}{u.unit ? ` · Unit ${u.unit}` : ""}</div>
-            <div style={{ color: T.textMuted, fontSize: 12 }}>{u.email} · {u.status}</div>
+      {note && <div style={{ color: "#34d399", fontSize: 13, marginBottom: 8 }}>{note}</div>}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <div style={{ flex: 1, minWidth: 120, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: T.textMuted }}>Members & invites</div>
+        <button type="button" onClick={downloadTemplate} style={labelBtn}>Download CSV template</button>
+        <label style={labelBtn}>Upload CSV<input type="file" accept=".csv,text/csv" onChange={onUpload} style={{ display: "none" }} /></label>
+        <Btn onClick={inviteAll} disabled={busy}>Send all invites</Btn>
+      </div>
+
+      {loading ? <div style={{ color: T.textMuted }}>Loading…</div> : members.map((u) => {
+        const st = memberState(u);
+        return editId === u.id ? (
+          <div key={u.id} style={{ padding: "10px 0", borderBottom: `1px solid ${T.border}` }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <Input placeholder="Email" value={ed.email} onChange={(e) => setEd({ ...ed, email: e.target.value })} />
+              <Input placeholder="Name" value={ed.full_name} onChange={(e) => setEd({ ...ed, full_name: e.target.value })} />
+              <Input placeholder="Unit (optional)" value={ed.unit} onChange={(e) => setEd({ ...ed, unit: e.target.value })} />
+              <Select value={ed.role} onChange={(e) => setEd({ ...ed, role: e.target.value })}>
+                {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </Select>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <Btn onClick={() => saveEdit(u.id)} disabled={busy}>Save</Btn>
+              <Btn kind="ghost" onClick={cancelEdit}>Cancel</Btn>
+            </div>
           </div>
-          <Select value={u.role} onChange={(e) => setRole(u.id, e.target.value)} style={{ width: 150 }}>
-            {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </Select>
-          <Btn kind="danger" onClick={() => remove(u.id)} style={{ padding: "6px 10px" }}>Remove</Btn>
-        </div>
-      ))}
+        ) : (
+          <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 14 }}>{u.full_name || u.email}{u.unit ? ` · Unit ${u.unit}` : ""}</div>
+              <div style={{ color: T.textMuted, fontSize: 12 }}>{u.email} · {ROLE_LABEL(u.role)}</div>
+            </div>
+            <Badge color={st.color}>{st.label}</Badge>
+            {st.key !== "access" && <Btn kind="ghost" onClick={() => invite(u)} disabled={busy} style={{ padding: "6px 10px" }}>{st.key === "invited" ? "Resend" : "Send invite"}</Btn>}
+            <Btn kind="ghost" onClick={() => startEdit(u)} style={{ padding: "6px 10px" }}>Edit</Btn>
+            <Btn kind="danger" onClick={() => remove(u.id)} style={{ padding: "6px 10px" }}>Remove</Btn>
+          </div>
+        );
+      })}
+
       <div style={{ marginTop: 12, padding: 12, background: T.surfaceAlt, borderRadius: 12, border: `1px solid ${T.border}` }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Invite someone</div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Add one member</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <Input placeholder="Email" value={m.email} onChange={(e) => setM({ ...m, email: e.target.value })} />
           <Input placeholder="Name" value={m.full_name} onChange={(e) => setM({ ...m, full_name: e.target.value })} />
@@ -131,9 +239,11 @@ function MembersPanel({ bid, onChanged }) {
             {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </Select>
         </div>
-        <div style={{ color: T.textMuted, fontSize: 12, margin: "8px 0" }}>They become active automatically the first time they sign in with this email (magic link).</div>
-        <Btn onClick={add}>Add member</Btn>
+        <div style={{ color: T.textMuted, fontSize: 12, margin: "8px 0" }}>Added members get no email until you press Send invite — so you can prepare the whole building first, then release access.</div>
+        <Btn onClick={add} disabled={busy}>Add member</Btn>
       </div>
     </div>
   );
 }
+
+const ROLE_LABEL = (r) => (ROLES.find(([v]) => v === r) || [r, r])[1];

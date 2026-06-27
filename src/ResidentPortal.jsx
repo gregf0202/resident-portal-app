@@ -8,6 +8,7 @@ import {
   Sun, Cloud, CloudRain, CloudSun, Gavel, Wind, MessageCircle, Download, Printer, BarChart3,
   Video, ExternalLink, ListChecks, Vote, KeyRound, ShieldAlert, Search, Store, ThumbsUp, HelpCircle, Pencil,
 } from "lucide-react";
+import { parseCSV, toCSV, downloadCSV, readFileText } from "./csv.js";
 
 /*
   Resident Portal — multi-building prototype (v3)
@@ -1413,34 +1414,75 @@ function Meetings() {
 }
 
 // ---------- key & fob register (committee only) -----------------------------
+const FOB_CSV_HEADERS = ["type", "label", "serial", "unit", "holder", "status", "notes"];
+const FOB_STATUSES = ["issued", "returned", "lost"];
+const blankFob = () => ({ type: "Fob", label: "", serial: "", unit: "", holder: "", issued: today(), notes: "" });
+
 function KeyFobRegister() {
   const { T, store, update, buildingId, flash } = useApp();
   const list = store.keyfobs.filter((k) => k.buildingId === buildingId);
   const [adding, setAdding] = useState(false);
   const [filt, setFilt] = useState("all");
-  const [kbulk, setKbulk] = useState("");
-  const [showBulk, setShowBulk] = useState(false);
-  const importFobs = () => { const rows = kbulk.split("\n").map((l) => l.trim()).filter(Boolean); if (!rows.length) return; update((s) => rows.forEach((l) => { const [type, label, serial, unit, holder] = l.split(",").map((x) => (x || "").trim()); s.keyfobs.unshift({ id: "kf" + Math.random().toString(36).slice(2, 8), buildingId, type: type || "Fob", label: label || "", serial: serial || "", unit: unit || "", holder: holder || "", issued: today(), status: "issued", notes: "" }); })); setKbulk(""); setShowBulk(false); flash(`${rows.length} device(s) imported`); };
-  const [f, setF] = useState({ type: "Fob", label: "", serial: "", unit: "", holder: "", issued: today(), notes: "" });
-  const add = () => { if (!f.label.trim() && !f.serial.trim()) return; update((s) => s.keyfobs.unshift({ id: "kf" + Math.random().toString(36).slice(2, 6), buildingId, ...f, status: "issued" })); setF({ type: "Fob", label: "", serial: "", unit: "", holder: "", issued: today(), notes: "" }); setAdding(false); flash("Added to register"); };
+  const [f, setF] = useState(blankFob());
+  const [editId, setEditId] = useState(null);
+  const [ef, setEf] = useState(blankFob());
+
+  const add = () => { if (!f.label.trim() && !f.serial.trim()) return; update((s) => s.keyfobs.unshift({ id: "kf" + Math.random().toString(36).slice(2, 8), buildingId, ...f, status: "issued" })); setF(blankFob()); setAdding(false); flash("Added to register"); };
   const setStatus = (id, status) => update((s) => { s.keyfobs.find((x) => x.id === id).status = status; });
+  const startEdit = (k) => { setEditId(k.id); setEf({ type: k.type || "Fob", label: k.label || "", serial: k.serial || "", unit: k.unit || "", holder: k.holder || "", issued: k.issued || today(), notes: k.notes || "" }); };
+  const saveEdit = (id) => { update((s) => { const x = s.keyfobs.find((k) => k.id === id); if (x) Object.assign(x, ef); }); setEditId(null); flash("Device updated"); };
+  const remove = (id) => { update((s) => { s.keyfobs = s.keyfobs.filter((k) => k.id !== id); }); flash("Device removed"); };
+
+  const downloadTemplate = () => {
+    const sample = [
+      { type: "Fob", label: "Main entry", serial: "SN-1024", unit: "12", holder: "Jane Owner", status: "issued", notes: "" },
+      { type: "Remote", label: "Carpark gate", serial: "SN-2087", unit: "12", holder: "Jane Owner", status: "issued", notes: "" },
+    ];
+    downloadCSV("nalohub-keyfob-template.csv", toCSV(FOB_CSV_HEADERS, sample));
+  };
+  const onUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const rows = parseCSV(await readFileText(file)).filter((r) => (r.label || r.serial || "").trim());
+      if (!rows.length) { flash("No devices found — check the file matches the template."); return; }
+      update((s) => rows.forEach((r) => {
+        const status = FOB_STATUSES.includes((r.status || "").toLowerCase()) ? r.status.toLowerCase() : "issued";
+        s.keyfobs.unshift({ id: "kf" + Math.random().toString(36).slice(2, 8), buildingId, type: r.type || "Fob", label: r.label || "", serial: r.serial || "", unit: r.unit || "", holder: r.holder || "", issued: today(), status, notes: r.notes || "" });
+      }));
+      flash(`${rows.length} device(s) imported`);
+    } catch (err) { flash("Couldn't read that file."); }
+  };
+
   const STC = { issued: SEMANTIC.ok, returned: T.textMuted, lost: SEMANTIC.bad };
   const counts = { issued: list.filter((k) => k.status === "issued").length, returned: list.filter((k) => k.status === "returned").length, lost: list.filter((k) => k.status === "lost").length };
   const shown = filt === "all" ? list : list.filter((k) => k.status === filt);
+  const fobInput = (obj, setObj) => (<div className="space-y-3">
+    <div className="grid sm:grid-cols-2 gap-3"><Field label="Type"><Select value={obj.type} onChange={(e) => setObj({ ...obj, type: e.target.value })}>{["Fob", "Key", "Remote", "Swipe card"].map((t) => <option key={t}>{t}</option>)}</Select></Field><Field label="What it opens"><Input value={obj.label} onChange={(e) => setObj({ ...obj, label: e.target.value })} placeholder="e.g. Main entry" /></Field></div>
+    <div className="grid sm:grid-cols-2 gap-3"><Field label="Serial / number"><Input value={obj.serial} onChange={(e) => setObj({ ...obj, serial: e.target.value })} /></Field><Field label="Unit"><Input value={obj.unit} onChange={(e) => setObj({ ...obj, unit: e.target.value })} /></Field></div>
+    <div className="grid sm:grid-cols-2 gap-3"><Field label="Holder"><Input value={obj.holder} onChange={(e) => setObj({ ...obj, holder: e.target.value })} /></Field><Field label="Issued"><Input type="date" value={obj.issued} onChange={(e) => setObj({ ...obj, issued: e.target.value })} /></Field></div>
+    <Field label="Notes (optional)"><Input value={obj.notes} onChange={(e) => setObj({ ...obj, notes: e.target.value })} /></Field>
+  </div>);
+  const csvBtn = { display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", background: T.surface, color: T.text, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 600 };
+
   return (<div><Head title="Key & Fob Register" sub="Committee-only record of access devices" action={<HeaderAction onClick={() => setAdding(true)}><Plus size={16} /> Add</HeaderAction>} /><Wrap>
-    <Card style={{ padding: 14, background: T.surfaceAlt }}><div className="flex items-center justify-between gap-2"><p style={{ color: T.textMuted }} className="text-sm flex items-center gap-2"><Lock size={14} /> Visible to the committee only — residents can't see this page.</p><button onClick={() => setShowBulk((v) => !v)} className="text-[11px] font-semibold inline-flex items-center gap-1 shrink-0" style={{ color: T.accent }}><Upload size={12} /> Bulk import</button></div>
-      {showBulk && <div className="mt-3"><Field label="type, label, serial, unit, holder (one per line)"><TextArea rows={3} value={kbulk} onChange={(e) => setKbulk(e.target.value)} placeholder={"Fob, Main entry, SN-1024, 412, Sandra Pho"} /></Field><div className="mt-2"><Btn grad onClick={importFobs}><Upload size={15} /> Import devices</Btn></div></div>}
+    <Card style={{ padding: 14, background: T.surfaceAlt }}>
+      <p style={{ color: T.textMuted }} className="text-sm flex items-center gap-2 mb-3"><Lock size={14} /> Visible to the committee only — residents can't see this page.</p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={downloadTemplate} style={csvBtn}><Download size={14} /> CSV template</button>
+        <label style={csvBtn}><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" onChange={onUpload} style={{ display: "none" }} /></label>
+        <span style={{ color: T.textMuted, fontSize: 11 }}>Columns: {FOB_CSV_HEADERS.join(", ")}</span>
+      </div>
     </Card>
-    {adding && (<Card style={{ padding: 18 }}><div className="space-y-3">
-      <div className="grid sm:grid-cols-2 gap-3"><Field label="Type"><Select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}>{["Fob", "Key", "Remote", "Swipe card"].map((t) => <option key={t}>{t}</option>)}</Select></Field><Field label="What it opens"><Input value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder="e.g. Main entry" /></Field></div>
-      <div className="grid sm:grid-cols-2 gap-3"><Field label="Serial / number"><Input value={f.serial} onChange={(e) => setF({ ...f, serial: e.target.value })} /></Field><Field label="Unit"><Input value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })} /></Field></div>
-      <div className="grid sm:grid-cols-2 gap-3"><Field label="Holder"><Input value={f.holder} onChange={(e) => setF({ ...f, holder: e.target.value })} /></Field><Field label="Issued"><Input type="date" value={f.issued} onChange={(e) => setF({ ...f, issued: e.target.value })} /></Field></div>
-      <Field label="Notes (optional)"><Input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
-      <div className="flex gap-2"><Btn grad onClick={add}>Add device</Btn><Btn kind="ghost" onClick={() => setAdding(false)}>Cancel</Btn></div>
-    </div></Card>)}
+    {adding && (<Card style={{ padding: 18 }}>{fobInput(f, setF)}<div className="flex gap-2 mt-3"><Btn grad onClick={add}>Add device</Btn><Btn kind="ghost" onClick={() => setAdding(false)}>Cancel</Btn></div></Card>)}
     <div className="flex gap-2 flex-wrap">{[["all", "All"], ["issued", `Issued ${counts.issued}`], ["returned", `Returned ${counts.returned}`], ["lost", `Lost ${counts.lost}`]].map(([k, label]) => { const on = filt === k; return <button key={k} onClick={() => setFilt(k)} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: on ? T.accent : T.surface, color: on ? T.accentText : T.textMuted, border: `1px solid ${on ? "transparent" : T.border}` }}>{label}</button>; })}</div>
     {shown.length === 0 && <Empty icon={KeyRound} title="Nothing here" hint="Add access devices to track who holds what." />}
-    {shown.map((k) => (<Card key={k.id} style={{ padding: 14 }}><div className="flex items-center gap-3"><div className="h-10 w-10 rounded-xl grid place-items-center shrink-0" style={{ background: hexToRgba(T.accent, T.mode === "dark" ? 0.2 : 0.12), color: T.accent }}><KeyRound size={18} /></div><div className="flex-1 min-w-0"><div className="font-semibold text-sm">{k.type} · {k.label}{k.serial ? ` · ${k.serial}` : ""}</div><div style={{ color: T.textMuted }} className="text-xs">Unit {k.unit || "—"} · {k.holder || "unassigned"} · issued {fmtDate(k.issued)}{k.notes ? ` · ${k.notes}` : ""}</div></div><Badge color={STC[k.status]}>{k.status}</Badge></div><div className="flex gap-2 mt-3">{k.status !== "returned" && <Btn kind="soft" onClick={() => setStatus(k.id, "returned")} className="!py-1.5 !text-xs">Mark returned</Btn>}{k.status !== "lost" && <Btn kind="ghost" onClick={() => setStatus(k.id, "lost")} className="!py-1.5 !text-xs">Mark lost</Btn>}{k.status !== "issued" && <Btn kind="ghost" onClick={() => setStatus(k.id, "issued")} className="!py-1.5 !text-xs">Re-issue</Btn>}</div></Card>))}
+    {shown.map((k) => (editId === k.id ? (
+      <Card key={k.id} style={{ padding: 18 }}>{fobInput(ef, setEf)}<div className="flex gap-2 mt-3"><Btn grad onClick={() => saveEdit(k.id)}>Save</Btn><Btn kind="ghost" onClick={() => setEditId(null)}>Cancel</Btn></div></Card>
+    ) : (
+      <Card key={k.id} style={{ padding: 14 }}><div className="flex items-center gap-3"><div className="h-10 w-10 rounded-xl grid place-items-center shrink-0" style={{ background: hexToRgba(T.accent, T.mode === "dark" ? 0.2 : 0.12), color: T.accent }}><KeyRound size={18} /></div><div className="flex-1 min-w-0"><div className="font-semibold text-sm">{k.type} · {k.label}{k.serial ? ` · ${k.serial}` : ""}</div><div style={{ color: T.textMuted }} className="text-xs">Unit {k.unit || "—"} · {k.holder || "unassigned"} · issued {fmtDate(k.issued)}{k.notes ? ` · ${k.notes}` : ""}</div></div><Badge color={STC[k.status]}>{k.status}</Badge></div><div className="flex gap-2 mt-3 flex-wrap">{k.status !== "returned" && <Btn kind="soft" onClick={() => setStatus(k.id, "returned")} className="!py-1.5 !text-xs">Mark returned</Btn>}{k.status !== "lost" && <Btn kind="ghost" onClick={() => setStatus(k.id, "lost")} className="!py-1.5 !text-xs">Mark lost</Btn>}{k.status !== "issued" && <Btn kind="ghost" onClick={() => setStatus(k.id, "issued")} className="!py-1.5 !text-xs">Re-issue</Btn>}<Btn kind="ghost" onClick={() => startEdit(k)} className="!py-1.5 !text-xs"><Pencil size={13} /> Edit</Btn><Btn kind="danger" onClick={() => remove(k.id)} className="!py-1.5 !text-xs"><Trash2 size={13} /> Remove</Btn></div></Card>
+    )))}
   </Wrap></div>);
 }
 

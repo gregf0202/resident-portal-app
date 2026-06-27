@@ -101,15 +101,79 @@ export async function listMembers(bid) {
   if (error) throw error;
   return data || [];
 }
+// Manually send the branded magic-link "invite" email to one member, then
+// stamp invited_at so the UI can show "Invite sent". Non-fatal: returns
+// { ok:false, reason } if the email couldn't be sent.
+export async function sendInvite(member) {
+  const email = (member && member.email ? member.email : "").trim();
+  if (!email) return { ok: false, reason: "No email on this member" };
+  const redirect = typeof window !== "undefined" ? window.location.origin : undefined;
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: true, emailRedirectTo: redirect },
+  });
+  if (error) return { ok: false, reason: error.message };
+  if (member.id) {
+    await supabase.from("memberships").update({ invited_at: new Date().toISOString() }).eq("id", member.id);
+  }
+  return { ok: true };
+}
+
+// Send invites to a list of members (controlled release). Returns counts.
+export async function sendInvites(members) {
+  let sent = 0; const failures = [];
+  for (const m of members || []) {
+    const res = await sendInvite(m);
+    if (res.ok) sent++; else failures.push(`${m.email}: ${res.reason}`);
+  }
+  return { sent, failures };
+}
+
+// Add a member WITHOUT sending any email (prepare the building first).
 export async function addMember(bid, m) {
+  const email = (m.email || "").trim();
   const { error } = await supabase.from("memberships").insert({
-    building_id: bid, email: m.email, full_name: m.full_name || m.email,
+    building_id: bid, email, full_name: m.full_name || email,
     role: m.role || "owner", unit: m.unit || null, status: "pending",
   });
   if (error) throw error;
 }
+
+// Bulk add members from an uploaded list. No emails are sent.
+// Returns { added, skipped } — skips rows already present (same email in building).
+export async function addMembersBulk(bid, rows) {
+  const existing = await listMembers(bid);
+  const have = new Set(existing.map((u) => (u.email || "").trim().toLowerCase()));
+  const seen = new Set();
+  const toInsert = [];
+  for (const r of rows || []) {
+    const email = (r.email || "").trim();
+    const key = email.toLowerCase();
+    if (!email || have.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    toInsert.push({
+      building_id: bid, email, full_name: (r.full_name || "").trim() || email,
+      role: (r.role || "owner").trim().toLowerCase(), unit: (r.unit || "").trim() || null, status: "pending",
+    });
+  }
+  if (toInsert.length) {
+    const { error } = await supabase.from("memberships").insert(toInsert);
+    if (error) throw error;
+  }
+  return { added: toInsert.length, skipped: (rows || []).length - toInsert.length };
+}
 export async function updateMemberRole(id, role) {
   const { error } = await supabase.from("memberships").update({ role }).eq("id", id);
+  if (error) throw error;
+}
+// Edit a member's editable fields (name, email, unit, role).
+export async function updateMember(id, fields) {
+  const patch = {};
+  if (fields.full_name !== undefined) patch.full_name = fields.full_name;
+  if (fields.email !== undefined) patch.email = (fields.email || "").trim();
+  if (fields.unit !== undefined) patch.unit = fields.unit || null;
+  if (fields.role !== undefined) patch.role = fields.role;
+  const { error } = await supabase.from("memberships").update(patch).eq("id", id);
   if (error) throw error;
 }
 export async function removeMember(id) {
