@@ -4,22 +4,16 @@ import { Smartphone, Share, Plus, MoreVertical, X, Check } from "lucide-react";
 /*
   AddToHomeScreen
   ----------------
-  Drop-in helper for the resident portal. It does three things:
+  1. Gives the saved home-screen shortcut the building's own icon + name (falls
+     back to the default NaloHub icon in index.html / public/).
+  2. First-visit card (remembered per device).
+  3. Floating "Add to Home Screen" button with iPhone/Android steps.
 
-  1. Gives the saved home-screen shortcut THIS building's own icon + name,
-     by injecting <link rel="apple-touch-icon"> / icon / manifest at runtime
-     from `building.logoImage` and `building.name`. (Baseline NaloHub icon in
-     index.html is the fallback if a building has no logo, or on browsers that
-     ignore data-URI icons.)
-  2. Shows a friendly, dismissible first-visit card (remembered per device).
-  3. Shows a step-by-step modal (iPhone vs Android) reachable any time from the
-     floating "Add to Home Screen" button — and uses Chrome's native install
-     prompt when available.
+  Auto-hides for good once the app is installed (Android fires `appinstalled`;
+  iOS hides when opened from the Home Screen). A small "×" lets anyone dismiss
+  it permanently if it persists.
 
-  Usage (in App.jsx, building mode):
-      import AddToHomeScreen from "./components/AddToHomeScreen.jsx";
-      ...
-      <AddToHomeScreen building={building} />
+  Usage in App.jsx (building mode):  <AddToHomeScreen building={building} />
 */
 
 const BRAND = "#0e7490";
@@ -31,8 +25,7 @@ function detect() {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const android = /android/i.test(ua);
   const standalone =
-    window.matchMedia &&
-    window.matchMedia("(display-mode: standalone)").matches;
+    window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
   const iosInstalled = window.navigator.standalone === true;
   return { iOS, android, installed: standalone || iosInstalled };
 }
@@ -45,11 +38,26 @@ export default function AddToHomeScreen({ building }) {
   const name = (building && building.name) || "NaloHub";
   const logo = (building && building.logoImage) || "";
 
+  // Has the button been retired (installed before, or dismissed)?
+  const [gone, setGone] = useState(() => {
+    try {
+      return localStorage.getItem("nalo_ath_gone") === "1";
+    } catch (e) {
+      return false;
+    }
+  });
+  const banish = () => {
+    setGone(true);
+    setShowCard(false);
+    try {
+      localStorage.setItem("nalo_ath_gone", "1");
+    } catch (e) {}
+  };
+
   // 1. Per-building home-screen icon, title and manifest
   useEffect(() => {
     if (!building) return;
     const head = document.head;
-
     const upsertLink = (rel) => {
       let el = head.querySelector(`link[data-nalo="${rel}"]`);
       if (!el) {
@@ -69,7 +77,6 @@ export default function AddToHomeScreen({ building }) {
       }
       return el;
     };
-
     if (logo) {
       upsertLink("apple-touch-icon").setAttribute("href", logo);
       upsertLink("icon").setAttribute("href", logo);
@@ -78,8 +85,6 @@ export default function AddToHomeScreen({ building }) {
     upsertMeta("apple-mobile-web-app-capable").setAttribute("content", "yes");
     upsertMeta("mobile-web-app-capable").setAttribute("content", "yes");
     document.title = name + " — NaloHub";
-
-    // Dynamic manifest (Android/Chrome) so the install carries the building name + icon
     try {
       const manifest = {
         name,
@@ -98,22 +103,20 @@ export default function AddToHomeScreen({ building }) {
               { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
             ],
       };
-      const blob = new Blob([JSON.stringify(manifest)], {
-        type: "application/manifest+json",
-      });
+      const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
       const url = URL.createObjectURL(blob);
-      const ml = head.querySelector('link[rel="manifest"]') || (() => {
-        const l = document.createElement("link");
-        l.setAttribute("rel", "manifest");
-        head.appendChild(l);
-        return l;
-      })();
+      const ml =
+        head.querySelector('link[rel="manifest"]') ||
+        (() => {
+          const l = document.createElement("link");
+          l.setAttribute("rel", "manifest");
+          head.appendChild(l);
+          return l;
+        })();
       const prev = ml.getAttribute("href");
       ml.setAttribute("href", url);
       if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
-    } catch (e) {
-      /* manifest is best-effort */
-    }
+    } catch (e) {}
   }, [building, name, logo]);
 
   // 2. Capture Chrome's native install prompt
@@ -126,9 +129,16 @@ export default function AddToHomeScreen({ building }) {
     return () => window.removeEventListener("beforeinstallprompt", onPrompt);
   }, []);
 
+  // 2b. Auto-hide for good once the app has been installed (Android/desktop)
+  useEffect(() => {
+    const onInstalled = () => banish();
+    window.addEventListener("appinstalled", onInstalled);
+    return () => window.removeEventListener("appinstalled", onInstalled);
+  }, []);
+
   // 3. First-visit card (once per device)
   useEffect(() => {
-    if (env.installed) return;
+    if (env.installed || gone) return;
     let seen = false;
     try {
       seen = localStorage.getItem("nalo_ath_seen") === "1";
@@ -137,7 +147,7 @@ export default function AddToHomeScreen({ building }) {
       const t = setTimeout(() => setShowCard(true), 1200);
       return () => clearTimeout(t);
     }
-  }, [env.installed]);
+  }, [env.installed, gone]);
 
   const dismissCard = () => {
     setShowCard(false);
@@ -155,22 +165,19 @@ export default function AddToHomeScreen({ building }) {
     if (!e) return;
     e.prompt();
     try {
-      await e.userChoice;
+      const choice = await e.userChoice;
+      if (choice && choice.outcome === "accepted") banish();
     } catch (err) {}
     deferred.current = null;
     setOpen(false);
   };
 
-  // Don't show anything when already running as an installed app
-  if (env.installed) return null;
+  // Hidden when running as an installed app, or once installed/dismissed
+  if (env.installed || gone) return null;
 
   const IconPreview = () => (
     <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2px 0 14px" }}>
-      {logo ? (
-        <img src={logo} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: "cover" }} />
-      ) : (
-        <img src="/icon-192.png" alt="" style={{ width: 52, height: 52, borderRadius: 12 }} />
-      )}
+      <img src={logo || "/icon-192.png"} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: "cover" }} />
       <div>
         <div style={{ fontWeight: 700, fontSize: 14 }}>{name}</div>
         <div style={{ fontSize: 12, color: "#64748b" }}>Your building, one tap away</div>
@@ -189,20 +196,35 @@ export default function AddToHomeScreen({ building }) {
 
   return (
     <>
-      {/* Floating, always-available launcher */}
-      <button
-        onClick={() => setOpen(true)}
-        aria-label="Add to Home Screen"
-        style={{
-          position: "fixed", right: 14, bottom: 14, zIndex: 80,
-          display: "inline-flex", alignItems: "center", gap: 8,
-          background: `linear-gradient(135deg, ${BRAND}, #22d3ee)`, color: "#04222e",
-          border: "none", borderRadius: 999, padding: "10px 16px",
-          fontWeight: 700, fontSize: 13, boxShadow: "0 6px 20px rgba(0,0,0,0.35)", cursor: "pointer",
-        }}
-      >
-        <Smartphone size={16} /> Add to Home Screen
-      </button>
+      {/* Floating launcher with a dismiss × */}
+      <div style={{ position: "fixed", right: 14, bottom: 14, zIndex: 80, display: "inline-flex", alignItems: "center" }}>
+        <button
+          onClick={() => setOpen(true)}
+          aria-label="Add to Home Screen"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            background: `linear-gradient(135deg, ${BRAND}, #22d3ee)`, color: "#04222e",
+            border: "none", borderRadius: "999px 0 0 999px", padding: "10px 14px 10px 16px",
+            fontWeight: 700, fontSize: 13, boxShadow: "0 6px 20px rgba(0,0,0,0.35)", cursor: "pointer",
+          }}
+        >
+          <Smartphone size={16} /> Add to Home Screen
+        </button>
+        <button
+          onClick={banish}
+          aria-label="Dismiss"
+          title="Don't show this again"
+          style={{
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            background: "#0b5566", color: "#cdeef5", border: "none",
+            borderRadius: "0 999px 999px 0", padding: "10px 10px",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.35)", cursor: "pointer",
+            borderLeft: "1px solid rgba(255,255,255,0.18)",
+          }}
+        >
+          <X size={15} />
+        </button>
+      </div>
 
       {/* First-visit card */}
       {showCard && (
@@ -233,7 +255,6 @@ export default function AddToHomeScreen({ building }) {
             </div>
             <div style={{ padding: 16, overflowY: "auto" }}>
               <IconPreview />
-
               {env.iOS && (
                 <>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 1 }}>On iPhone / iPad (Safari)</div>
@@ -242,7 +263,6 @@ export default function AddToHomeScreen({ building }) {
                   <Step n={3} icon={<Check size={16} color={BRAND} />}>Tap <b>Add</b> — done</Step>
                 </>
               )}
-
               {!env.iOS && (
                 <>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 1 }}>On Android (Chrome)</div>
