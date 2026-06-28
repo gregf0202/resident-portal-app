@@ -3,7 +3,6 @@ import { supabase } from "./supabaseClient.js";
 import SignIn from "./components/SignIn.jsx";
 import PlatformConsole from "./components/PlatformConsole.jsx";
 import { AppCtx, BuildingApp, Toast, themeById } from "./ResidentPortal.jsx";
-import AddToHomeScreen from "./components/AddToHomeScreen.jsx";
 import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange, loadInvoices, loadPlatformSettings } from "./db.js";
 import { downloadInvoicePdf } from "./invoicePdf.js";
 
@@ -119,7 +118,6 @@ export default function App() {
       <div style={{ background: `linear-gradient(165deg, ${T.appBg}, ${T.appBg2})`, color: T.text, minHeight: "100vh", fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }}>
         <BuildingApp />
         <Toast />
-        <AddToHomeScreen building={building} />
       </div>
     </AppCtx.Provider>
   );
