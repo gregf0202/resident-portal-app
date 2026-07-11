@@ -472,6 +472,161 @@ export async function openPermitPdf(permitId) {
   setTimeout(() => URL.revokeObjectURL(obj), 60000);
 }
 
+// ---- BCC voting: motions, votes, proxies ---------------------------------
+// Majority is snapshot at opening: floor(BCC members / 2) + 1. Votes are
+// immutable (audit trail); the DB tallies and decides automatically.
+export async function listMotions(bid) {
+  const { data, error } = await supabase.from("motions").select("*").eq("building_id", bid).order("opened_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function listMotionVotes(motionIds) {
+  if (!motionIds.length) return [];
+  const { data, error } = await supabase.from("motion_votes").select("*").in("motion_id", motionIds);
+  if (error) throw error;
+  return data || [];
+}
+export async function createMotion(bid, authUserId, m) {
+  const { data, error } = await supabase.from("motions").insert({
+    building_id: bid, title: m.title, description: m.description || null,
+    context_type: m.context_type || "general", context_id: m.context_id || null,
+    details: m.details || {}, opened_by: authUserId,
+  }).select("id").single();
+  if (error) throw error;
+  return data.id;
+}
+export async function castVote(motionId, authUserId, vote, comment, proxy) {
+  const row = { motion_id: motionId, voter_user_id: authUserId, vote, comment: comment || null };
+  if (proxy) { row.proxy_for_user_id = proxy.principal_user_id; row.proxy_appointment_id = proxy.id; }
+  const { error } = await supabase.from("motion_votes").insert(row);
+  if (error) throw error;
+}
+export async function withdrawMotion(id) {
+  const { error } = await supabase.from("motions").update({ status: "withdrawn", decided_at: new Date().toISOString() }).eq("id", id).eq("status", "open");
+  if (error) throw error;
+}
+export async function listProxies(bid) {
+  const { data, error } = await supabase.from("proxy_appointments").select("*").eq("building_id", bid).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function createProxy(bid, p) {
+  const { error } = await supabase.from("proxy_appointments").insert({ building_id: bid, ...p });
+  if (error) throw error;
+  audit(bid, "proxy.appointed", `${p.principal_name} -> ${p.proxy_name}`);
+}
+export async function revokeProxy(bid, id) {
+  const { error } = await supabase.from("proxy_appointments").update({ status: "revoked" }).eq("id", id);
+  if (error) throw error;
+  audit(bid, "proxy.revoked", id);
+}
+export async function openProxyFormPdf(id) {
+  const { data: s } = await supabase.auth.getSession();
+  const token = s && s.session ? s.session.access_token : "";
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-form-pdf?id=${id}`, { headers: { Authorization: `Bearer ${token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY } });
+  if (!res.ok) throw new Error("Couldn't generate the proxy form");
+  const obj = URL.createObjectURL(await res.blob());
+  window.open(obj, "_blank");
+  setTimeout(() => URL.revokeObjectURL(obj), 60000);
+}
+
+// ---- maintenance workflow: activity trail + quotes -------------------------
+export async function listMaintActivity(bid, maintenanceId) {
+  const { data, error } = await supabase.from("maintenance_activity").select("*").eq("building_id", bid).eq("maintenance_id", maintenanceId).order("created_at");
+  if (error) throw error;
+  return data || [];
+}
+export async function addMaintActivity(bid, maintenanceId, kind, body, extra) {
+  const { error } = await supabase.from("maintenance_activity").insert({ building_id: bid, maintenance_id: maintenanceId, kind, body: body || null, data: extra || {} });
+  if (error) throw error;
+}
+export async function listMaintQuotes(bid, maintenanceId) {
+  const { data, error } = await supabase.from("maintenance_quotes").select("*").eq("building_id", bid).eq("maintenance_id", maintenanceId).order("created_at");
+  if (error) throw error;
+  return data || [];
+}
+export async function addMaintQuote(bid, maintenanceId, q) {
+  const { error } = await supabase.from("maintenance_quotes").insert({ building_id: bid, maintenance_id: maintenanceId, ...q });
+  if (error) throw error;
+}
+export async function setQuoteStatus(id, status) {
+  const { error } = await supabase.from("maintenance_quotes").update({ status }).eq("id", id);
+  if (error) throw error;
+}
+
+// ---- contracts & contractors registers ------------------------------------
+export async function listContracts(bid) {
+  const { data, error } = await supabase.from("contracts").select("*").eq("building_id", bid).order("end_date", { ascending: true, nullsFirst: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function saveContract(bid, c) {
+  const row = { ...c, building_id: bid };
+  const { error } = row.id ? await supabase.from("contracts").update(row).eq("id", row.id) : await supabase.from("contracts").insert(row);
+  if (error) throw error;
+  audit(bid, c.id ? "contract.updated" : "contract.added", c.party_name);
+}
+export async function deleteContract(bid, id) {
+  const { error } = await supabase.from("contracts").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "contract.deleted", id);
+}
+export async function listContractors(bid) {
+  const { data, error } = await supabase.from("contractors").select("*").eq("building_id", bid).order("trade").order("company_name");
+  if (error) throw error;
+  return data || [];
+}
+export async function saveContractor(bid, c) {
+  const row = { ...c, building_id: bid };
+  const { error } = row.id ? await supabase.from("contractors").update(row).eq("id", row.id) : await supabase.from("contractors").insert(row);
+  if (error) throw error;
+  audit(bid, c.id ? "contractor.updated" : "contractor.added", c.company_name);
+}
+export async function deleteContractor(bid, id) {
+  const { error } = await supabase.from("contractors").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "contractor.deleted", id);
+}
+
+// ---- monthly walk-through checklist ----------------------------------------
+export async function listWalkItems(bid) {
+  const { data, error } = await supabase.from("walkthrough_items").select("*").eq("building_id", bid).eq("active", true).order("sort");
+  if (error) throw error;
+  return data || [];
+}
+export async function seedWalkDefaults(bid) {
+  const { data, error } = await supabase.rpc("seed_walkthrough_defaults", { p_building: bid });
+  if (error) throw error;
+  return data;
+}
+export async function listWalks(bid) {
+  const { data, error } = await supabase.from("walkthroughs").select("*").eq("building_id", bid).order("walk_date", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function createWalk(bid, attendees) {
+  const { data, error } = await supabase.from("walkthroughs").insert({ building_id: bid, attendees: attendees || null }).select("id").single();
+  if (error) throw error;
+  audit(bid, "walkthrough.started", attendees || "");
+  return data.id;
+}
+export async function listWalkResults(walkId) {
+  const { data, error } = await supabase.from("walkthrough_results").select("*").eq("walkthrough_id", walkId);
+  if (error) throw error;
+  return data || [];
+}
+export async function setWalkResult(walkId, itemId, result, note) {
+  const { error } = await supabase.from("walkthrough_results").upsert(
+    { walkthrough_id: walkId, item_id: itemId, result, note: note || null },
+    { onConflict: "walkthrough_id,item_id" });
+  if (error) throw error;
+}
+export async function completeWalk(bid, walkId, summary) {
+  const { error } = await supabase.from("walkthroughs").update({ status: "completed", summary: summary || null }).eq("id", walkId);
+  if (error) throw error;
+  audit(bid, "walkthrough.completed", walkId);
+}
+
 // ---- platform settings (invoice issuer + payment details) ----
 export async function loadPlatformSettings() {
   const { data, error } = await supabase.from("platform_settings").select("data").eq("id", "singleton").maybeSingle();
