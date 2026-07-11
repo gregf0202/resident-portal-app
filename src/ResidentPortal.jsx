@@ -13,7 +13,9 @@ import {
 import { parseCSV, toCSV, downloadCSV, readFileText } from "./csv.js";
 import { Document as DocxDocument, Packer as DocxPacker, Paragraph as DocxP, TextRun as DocxT, HeadingLevel as DocxH } from "docx";
 import GuidedTour from "./components/GuidedTour.jsx";
-import { audit, searchLegislation, loadDisputes, createDispute, appendDisputeEvent, setDisputeStatus, verifyDisputeChain, uploadAttachment, attachmentUrl } from "./db.js";
+import { audit, searchLegislation, loadDisputes, createDispute, appendDisputeEvent, setDisputeStatus, verifyDisputeChain, uploadAttachment, attachmentUrl,
+  unitHealthCheck, listUnits, createUnit, addUnitPerson, addUnitPet, addUnitVehicle, addAccessItem, updateAccessItemStatus, addUnitBreach,
+  listApplications, createApplication, decideApplication, withdrawApplication, listApplicationAttachments, uploadMedia, mediaUrl, addApplicationAttachment, listPermits, openPermitPdf } from "./db.js";
 import { supabase } from "./supabaseClient.js";
 
 /*
@@ -649,7 +651,7 @@ const NAV = [
   { key: "announcements", label: "Announcements", icon: Megaphone, group: "main", show: () => true },
   { key: "maintenance", label: "Maintenance", icon: Wrench, group: "main", show: () => true },
   { key: "assets", label: "Asset Register", icon: Boxes, group: "main", show: (r) => isCommittee(r) || r === "manager" },
-  { key: "bookings", label: "Bookings", icon: CalendarCheck, group: "main", show: () => true },
+  { key: "bookings", label: "Applications & Bookings", icon: CalendarCheck, group: "main", show: () => true },
   { key: "approvals", label: "Approvals", icon: ClipboardCheck, group: "main", show: (r) => isApprover(r) },
   { key: "reports", label: "Reports", icon: BarChart3, group: "main", show: (r) => isApprover(r) },
   { key: "actions", label: "Action Register", icon: ListChecks, group: "main", show: (r) => isApprover(r) },
@@ -666,6 +668,7 @@ const NAV = [
   { key: "documents", label: "Documents", icon: FileText, group: "building", show: () => true },
   { key: "meetings", label: "Meetings", icon: Gavel, group: "building", show: (r) => r !== "tenant" },
   { key: "keyfobs", label: "Key & Fob Register", icon: KeyRound, group: "building", show: (r) => isCommittee(r) },
+  { key: "unitsearch", label: "Unit Search", icon: Search, group: "building", show: (r) => isCommittee(r) },
   { key: "firesafety", label: "Fire Safety", icon: ShieldAlert, group: "building", show: () => true },
   { key: "help", label: "Help", icon: HelpCircle, group: "building", show: () => true },
   { key: "billing", label: "Billing", icon: Receipt, group: "building", show: (r) => isCommittee(r) },
@@ -898,7 +901,7 @@ function Billing() {
 // ---------- view router -----------------------------------------------------
 function ViewRouter() {
   const { view } = useApp();
-  const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, assets: AssetRegister, bookings: Bookings, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, help: HelpHub, settings: SettingsView, nalopilot: NaloPilotView, bylaws: ByLawsView, compliance: ComplianceView, disputes: DisputeRecordsView };
+  const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, assets: AssetRegister, bookings: ApplicationsBookings, unitsearch: UnitSearchView, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, help: HelpHub, settings: SettingsView, nalopilot: NaloPilotView, bylaws: ByLawsView, compliance: ComplianceView, disputes: DisputeRecordsView };
   const C = map[view] || Dashboard;
   return <C />;
 }
@@ -1257,6 +1260,261 @@ function Bookings() {
         {mine.map((b) => { const M = FAC_META[b.facility]; const stc = b.status === "pending" ? SEMANTIC.warn : b.status === "declined" ? SEMANTIC.bad : SEMANTIC.ok; return (
           <Card key={b.id} style={{ padding: 16 }}><div className="flex items-center gap-3"><div className="h-10 w-10 rounded-xl grid place-items-center shrink-0 text-white" style={{ background: `linear-gradient(135deg, ${HUE.bookings[0]}, ${HUE.bookings[1]})` }}><M.icon size={18} /></div><div className="flex-1 min-w-0"><div className="font-semibold">{M.label}</div><div style={{ color: T.textMuted }} className="text-xs">{b.facility === "visitor" ? `${fmtDate(b.fromDate)} → ${fmtDate(b.toDate)}` : `${fmtDate(b.fromDate)}${b.timeFrom ? ` · ${b.timeFrom}–${b.timeTo}` : ""}`} · {b.bookedBy}</div></div><Badge color={stc}>{b.status === "pending" ? "Pending" : b.status === "declined" ? "Declined" : "Confirmed"}</Badge></div>{b.decidedBy && <div style={{ color: T.textMuted, borderTop: `1px solid ${T.border}` }} className="text-xs mt-3 pt-2.5">{b.status === "confirmed" ? "Approved" : "Declined"} by {b.decidedBy} · {fmtDate(b.decidedAt)}{b.decisionNote && ` — “${b.decisionNote}”`}</div>}</Card>
         ); })}
+      </Wrap>
+    </div>
+  );
+}
+
+// ---------- applications & bookings (live backend) --------------------------
+// Kind first (Application or Booking), then category. Applications support
+// document/image/video uploads; parking permits capture vehicle + dates and
+// auto-issue a fold-for-dash permit PDF on approval. Committee gets a queue.
+const APP_CATS = {
+  application: [["pet", "Pet approval", Tag], ["lot_improvement", "Lot improvement", Wrench], ["parking_permit", "Parking permit", Car], ["keys_access", "Keys & access", KeyRound], ["other", "Other request", FileText]],
+  booking: [["common_area_booking", "BBQ / common area", Flame], ["other", "Other booking", CalendarCheck]],
+};
+const APP_STATUS_COLOR = (s) => s === "approved" ? SEMANTIC.ok : s === "declined" || s === "withdrawn" ? SEMANTIC.bad : SEMANTIC.warn;
+function ApplicationsBookings() {
+  const { backend } = useApp();
+  if (!backend) return <Bookings />; // demo keeps the classic bookings experience
+  return <ApplicationsBookingsLive />;
+}
+function ApplicationsBookingsLive() {
+  const { T, user, buildingId, flash } = useApp();
+  const committee = isCommittee(user.role);
+  const [rows, setRows] = useState([]); const [atts, setAtts] = useState([]); const [permits, setPermits] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [kind, setKind] = useState("application");
+  const [cat, setCat] = useState("pet");
+  const [f, setF] = useState({ title: "", detail: "", make: "", model: "", colour: "", rego: "", from: "", to: "", petType: "", petName: "", petBreed: "" });
+  const [files, setFiles] = useState([]);
+  const [notes, setNotes] = useState({});
+  const [busy, setBusy] = useState(false);
+  const reload = async () => {
+    try {
+      const r = await listApplications(buildingId);
+      setRows(r);
+      setAtts(await listApplicationAttachments(r.map((x) => x.id)));
+      if (committee || r.some((x) => x.category === "parking_permit")) setPermits(await listPermits(buildingId));
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, [buildingId]);
+  const submit = async () => {
+    try {
+      setBusy(true);
+      let title = f.title.trim(); const details = {};
+      if (cat === "parking_permit") {
+        if (!f.make || !f.model || !f.colour || !f.rego || !f.from || !f.to) { flash("Parking permits need vehicle make, model, colour, rego and dates"); setBusy(false); return; }
+        Object.assign(details, { vehicle_make: f.make, vehicle_model: f.model, vehicle_colour: f.colour, vehicle_rego: f.rego, date_from: f.from, date_to: f.to });
+        title = title || `Parking permit — ${f.make} ${f.model} (${f.rego.toUpperCase()})`;
+      }
+      if (cat === "pet") { Object.assign(details, { pet_type: f.petType, name: f.petName, breed: f.petBreed }); title = title || `Pet approval — ${f.petName || f.petType || "pet"}`; }
+      if (f.detail.trim()) details.description = f.detail.trim();
+      if (kind === "booking" && f.from) { details.date_from = f.from; details.date_to = f.to || f.from; }
+      if (!title) title = (APP_CATS[kind].find((c) => c[0] === cat) || ["", "Request"])[1];
+      const myUnit = null; // unit link resolved server-side reporting later; details carry unit text
+      details.unit = user.unit || "";
+      const { data: s } = await supabase.auth.getSession();
+      const uid = s && s.session ? s.session.user.id : null;
+      const id = await createApplication(buildingId, uid, myUnit, kind, cat, title, details);
+      for (const file of files) {
+        const up = await uploadMedia(buildingId, "applications", file);
+        await addApplicationAttachment(id, up);
+      }
+      setF({ title: "", detail: "", make: "", model: "", colour: "", rego: "", from: "", to: "", petType: "", petName: "", petBreed: "" });
+      setFiles([]);
+      flash(kind === "booking" ? "Booking request sent to the committee" : "Application submitted — the committee has been alerted");
+      reload();
+    } catch (e) { flash(String(e.message || e)); }
+    setBusy(false);
+  };
+  const decide = async (id, ok) => {
+    try {
+      const { data: s } = await supabase.auth.getSession();
+      await decideApplication(buildingId, id, ok, notes[id] || "", s && s.session ? s.session.user.id : null);
+      flash(ok ? "Approved — the applicant has been notified" : "Declined — the applicant has been notified");
+      reload();
+    } catch (e) { flash(String(e.message || e)); }
+  };
+  const attsFor = (id) => atts.filter((a) => a.application_id === id);
+  const permitFor = (id) => permits.find((p) => p.application_id === id);
+  const openAtt = async (a) => { try { const u = await mediaUrl(a.storage_path); window.open(u, "_blank"); } catch (e) { flash("Couldn't open the file"); } };
+  const queue = rows.filter((r) => ["submitted", "under_review"].includes(r.status));
+  const cats = APP_CATS[kind];
+  return (
+    <div>
+      <Head title="Applications & Bookings" sub="Pets, lot improvements, parking permits and shared-space bookings" />
+      <Wrap>
+        <Card style={{ padding: 18 }}>
+          <SectionTitle>New request</SectionTitle>
+          <div className="flex gap-2 mb-3">{[["application", "Application"], ["booking", "Booking"]].map(([k, l]) => (
+            <button key={k} onClick={() => { setKind(k); setCat(APP_CATS[k][0][0]); }} className="px-3.5 py-2 rounded-xl text-sm font-medium" style={{ background: kind === k ? `linear-gradient(90deg, ${T.accent}, ${T.accent2})` : T.surface, color: kind === k ? T.accentText : T.text, border: `1px solid ${kind === k ? "transparent" : T.border}` }}>{l}</button>))}
+          </div>
+          <div className="flex gap-2 flex-wrap mb-3">{cats.map(([k, l, Ic]) => (
+            <button key={k} onClick={() => setCat(k)} className="px-3 py-1.5 rounded-xl text-xs font-medium inline-flex items-center gap-1.5" style={{ background: cat === k ? hexToRgba(T.accent, 0.18) : T.surfaceAlt, color: cat === k ? T.accent : T.textMuted, border: `1px solid ${cat === k ? T.accent : T.border}` }}><Ic size={13} /> {l}</button>))}
+          </div>
+          <div className="space-y-3">
+            {cat === "parking_permit" && (<>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Vehicle make"><Input value={f.make} onChange={(e) => setF({ ...f, make: e.target.value })} placeholder="Toyota" /></Field>
+                <Field label="Model"><Input value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} placeholder="RAV4" /></Field>
+                <Field label="Colour"><Input value={f.colour} onChange={(e) => setF({ ...f, colour: e.target.value })} placeholder="White" /></Field>
+                <Field label="Rego"><Input value={f.rego} onChange={(e) => setF({ ...f, rego: e.target.value })} placeholder="123ABC" /></Field>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Permit from"><Input type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
+                <Field label="Permit to"><Input type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
+              </div>
+            </>)}
+            {cat === "pet" && (<div className="grid grid-cols-3 gap-3">
+              <Field label="Pet type"><Input value={f.petType} onChange={(e) => setF({ ...f, petType: e.target.value })} placeholder="Dog" /></Field>
+              <Field label="Name"><Input value={f.petName} onChange={(e) => setF({ ...f, petName: e.target.value })} placeholder="Rex" /></Field>
+              <Field label="Breed"><Input value={f.petBreed} onChange={(e) => setF({ ...f, petBreed: e.target.value })} placeholder="Cavoodle" /></Field>
+            </div>)}
+            {kind === "booking" && (<div className="grid grid-cols-2 gap-3">
+              <Field label="Date"><Input type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
+              <Field label="To (optional)"><Input type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
+            </div>)}
+            <Field label="Title (optional)"><Input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="Short summary" /></Field>
+            <Field label="Details"><Input value={f.detail} onChange={(e) => setF({ ...f, detail: e.target.value })} placeholder={cat === "lot_improvement" ? "Describe the works — attach quotes below" : "Anything the committee should know"} /></Field>
+            <Field label="Attachments — documents, quotes, photos, video">
+              <input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))}
+                style={{ color: T.textMuted }} className="text-sm" />
+              {files.length > 0 && <div className="text-xs mt-1" style={{ color: T.textMuted }}><Paperclip size={12} className="inline" /> {files.map((x) => x.name).join(", ")}</div>}
+            </Field>
+            <Btn grad disabled={busy} onClick={submit}>{busy ? "Sending…" : kind === "booking" ? "Request booking" : "Submit application"}</Btn>
+          </div>
+        </Card>
+        {committee && queue.length > 0 && (<>
+          <SectionTitle>Awaiting decision ({queue.length})</SectionTitle>
+          {queue.map((r) => (
+            <Card key={r.id} style={{ padding: 16 }}>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold">{r.title || r.category}</div>
+                  <div style={{ color: T.textMuted }} className="text-xs">{r.kind} · {r.category.replace(/_/g, " ")}{r.details && r.details.unit ? ` · Unit ${r.details.unit}` : ""} · {fmtDate((r.submitted_at || "").slice(0, 10))}</div>
+                  {r.category === "parking_permit" && r.details && <div style={{ color: T.textMuted }} className="text-xs mt-1">{r.details.vehicle_make} {r.details.vehicle_model} · {r.details.vehicle_colour} · {(r.details.vehicle_rego || "").toUpperCase()} · {fmtDate(r.details.date_from)} → {fmtDate(r.details.date_to)}</div>}
+                  {r.details && r.details.description && <div style={{ color: T.textMuted }} className="text-xs mt-1">{r.details.description}</div>}
+                </div>
+                <Badge color={APP_STATUS_COLOR(r.status)}>{r.status.replace(/_/g, " ")}</Badge>
+              </div>
+              {attsFor(r.id).length > 0 && <div className="flex gap-2 flex-wrap mt-2">{attsFor(r.id).map((a) => (<button key={a.id} onClick={() => openAtt(a)} className="text-xs px-2 py-1 rounded-lg inline-flex items-center gap-1" style={{ background: T.surfaceAlt, color: T.accent, border: `1px solid ${T.border}` }}><Paperclip size={11} /> {a.file_name}</button>))}</div>}
+              <div className="mt-3"><Input placeholder="Decision note (optional)" value={notes[r.id] || ""} onChange={(e) => setNotes({ ...notes, [r.id]: e.target.value })} /></div>
+              <div className="flex gap-2 mt-2.5"><Btn grad onClick={() => decide(r.id, true)}><Check size={15} /> Approve</Btn><Btn kind="ghost" onClick={() => decide(r.id, false)}><X size={15} /> Decline</Btn></div>
+            </Card>))}
+        </>)}
+        <SectionTitle>{committee ? "All requests" : "Your requests"}</SectionTitle>
+        {loading && <Card style={{ padding: 16 }}><div style={{ color: T.textMuted }}>Loading…</div></Card>}
+        {!loading && rows.length === 0 && <Empty icon={CalendarCheck} title="Nothing here yet" hint="Submit an application or booking above — the committee is alerted the moment it lands." />}
+        {rows.map((r) => { const p = r.category === "parking_permit" && r.status === "approved" ? permitFor(r.id) : null; return (
+          <Card key={r.id} style={{ padding: 16 }}>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold">{r.title || r.category}</div>
+                <div style={{ color: T.textMuted }} className="text-xs">{r.kind} · {r.category.replace(/_/g, " ")} · {fmtDate((r.submitted_at || "").slice(0, 10))}{r.decision_note ? ` — “${r.decision_note}”` : ""}</div>
+              </div>
+              <Badge color={APP_STATUS_COLOR(r.status)}>{r.status.replace(/_/g, " ")}</Badge>
+            </div>
+            {attsFor(r.id).length > 0 && <div className="flex gap-2 flex-wrap mt-2">{attsFor(r.id).map((a) => (<button key={a.id} onClick={() => openAtt(a)} className="text-xs px-2 py-1 rounded-lg inline-flex items-center gap-1" style={{ background: T.surfaceAlt, color: T.accent, border: `1px solid ${T.border}` }}><Paperclip size={11} /> {a.file_name}</button>))}</div>}
+            {p && <div className="mt-3"><Btn onClick={() => openPermitPdf(p.id).catch(() => flash("Couldn't generate the permit PDF"))}><Download size={15} /> Permit {p.permit_no} — download PDF</Btn></div>}
+          </Card>); })}
+      </Wrap>
+    </div>
+  );
+}
+
+// ---------- unit search (committee) ------------------------------------------
+// Type a unit number, get the lot's complete story: people, pets, vehicles,
+// keys & fobs, by-law breaches, disputes and applications, in one view.
+function UnitSearchView() {
+  const { T, user, buildingId, backend, flash, store } = useApp();
+  const [q, setQ] = useState("");
+  const [units, setUnits] = useState([]);
+  const [hc, setHc] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [addType, setAddType] = useState("");
+  const [af, setAf] = useState({});
+  useEffect(() => { if (backend) listUnits(buildingId).then(setUnits).catch(() => {}); }, [buildingId, backend]);
+  if (!backend) return (<div><Head title="Unit Search" sub="One unit number — the whole story" /><Wrap><Empty icon={Search} title="Connects in production" hint="In the live portal, searching a unit number returns owners, tenants, pets, vehicles, keys & fobs, breaches, disputes and applications for that lot." /></Wrap></div>);
+  const run = async (unitNo) => {
+    const target = (unitNo || q).trim();
+    if (!target) return;
+    setBusy(true); setAddType("");
+    try { const d = await unitHealthCheck(buildingId, target); setHc({ q: target, ...d }); } catch (e) { flash(String(e.message || e)); }
+    setBusy(false);
+  };
+  const addRecord = async () => {
+    try {
+      const uid = hc && hc.unit ? hc.unit.id : null;
+      if (!uid && addType !== "unit") { flash("Create the unit first"); return; }
+      if (addType === "unit") { await createUnit(buildingId, hc ? hc.q : q, af.lot, af.spaces); flash("Unit created"); listUnits(buildingId).then(setUnits).catch(() => {}); }
+      if (addType === "person") await addUnitPerson(buildingId, uid, { person_type: af.ptype || "owner", full_name: af.name || "", email: af.email || null, phone: af.phone || null });
+      if (addType === "pet") await addUnitPet(buildingId, uid, { pet_type: af.ptype || "", name: af.name || "", breed: af.breed || "", approval_status: "approved" });
+      if (addType === "vehicle") await addUnitVehicle(buildingId, uid, { make: af.make || "", model: af.model || "", colour: af.colour || "", registration: af.rego || "", parking_bay: af.bay || null });
+      if (addType === "key") {
+        const member = (store.users || []).find((m) => m.id === af.member);
+        await addAccessItem(buildingId, uid, { item_type: af.ptype || "key", identifier: af.ident || null, label: af.label || null, issued_to: member ? member.name : (af.name || null), issued_to_user_id: member ? member.authId : null, issued_at: today() });
+        if (member && member.authId) flash("Issued — the recipient has been asked to confirm receipt in-app");
+      }
+      if (addType === "breach") await addUnitBreach(buildingId, uid, { bylaw_ref: af.ref || "", description: af.desc || "", occurred_at: af.date || today() });
+      setAddType(""); setAf({});
+      run(hc.q);
+    } catch (e) { flash(String(e.message || e)); }
+  };
+  const Section = ({ title, rows, render, empty }) => (
+    <Card style={{ padding: 16 }}>
+      <SectionTitle>{title}</SectionTitle>
+      {(!rows || rows.length === 0) ? <div className="text-sm" style={{ color: T.textMuted }}>{empty || "Nothing recorded."}</div> : rows.map(render)}
+    </Card>
+  );
+  const line = (main, sub, k) => (<div key={k} className="py-1.5" style={{ borderBottom: `1px dashed ${T.border}` }}><div className="text-sm font-medium">{main}</div>{sub && <div className="text-xs" style={{ color: T.textMuted }}>{sub}</div>}</div>);
+  const AF = (label, key, ph, type) => (<Field label={label}><Input type={type || "text"} value={af[key] || ""} onChange={(e) => setAf({ ...af, [key]: e.target.value })} placeholder={ph || ""} /></Field>);
+  return (
+    <div>
+      <Head title="Unit Search" sub="One unit number — the whole story" />
+      <Wrap>
+        <Card style={{ padding: 18 }}>
+          <div className="flex gap-2">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="Unit number — e.g. 12" />
+            <Btn grad disabled={busy} onClick={() => run()}><Search size={15} /> {busy ? "Searching…" : "Search"}</Btn>
+          </div>
+          {units.length > 0 && <div className="flex gap-1.5 flex-wrap mt-3">{units.map((u) => (<button key={u.id} onClick={() => { setQ(u.unit_number); run(u.unit_number); }} className="text-xs px-2.5 py-1 rounded-lg" style={{ background: T.surfaceAlt, color: T.textMuted, border: `1px solid ${T.border}` }}>{u.unit_number}</button>))}</div>}
+        </Card>
+        {hc && !hc.unit && (
+          <Card style={{ padding: 16 }}>
+            <div className="font-semibold mb-1">Unit “{hc.q}” isn't in the register yet</div>
+            <div className="text-sm mb-3" style={{ color: T.textMuted }}>Residents matching this unit number{(hc.residents_directory || []).length ? "" : " — none found"}: {(hc.residents_directory || []).map((m) => m.full_name).join(", ")}</div>
+            {addType !== "unit" ? <Btn grad onClick={() => setAddType("unit")}><Plus size={15} /> Create unit {hc.q}</Btn> :
+              (<div className="space-y-3">{AF("Lot number (optional)", "lot", "Lot 12")}{AF("Parking spaces", "spaces", "1")}<div className="flex gap-2"><Btn grad onClick={addRecord}>Create</Btn><Btn kind="ghost" onClick={() => setAddType("")}>Cancel</Btn></div></div>)}
+          </Card>)}
+        {hc && hc.unit && (<>
+          <Card style={{ padding: 16 }}>
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-xl grid place-items-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})` }}><Home size={20} /></div>
+              <div className="flex-1"><div className="font-bold text-lg">Unit {hc.unit.unit_number}</div><div className="text-xs" style={{ color: T.textMuted }}>{hc.unit.lot_number || "No lot number"} · {hc.unit.parking_spaces} parking space{hc.unit.parking_spaces === 1 ? "" : "s"}</div></div>
+              <div className="flex gap-1.5 flex-wrap justify-end">{[["person", "Person"], ["pet", "Pet"], ["vehicle", "Vehicle"], ["key", "Key/Fob"], ["breach", "Breach"]].map(([k, l]) => (<button key={k} onClick={() => { setAddType(addType === k ? "" : k); setAf({}); }} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ background: addType === k ? hexToRgba(T.accent, 0.18) : T.surfaceAlt, color: addType === k ? T.accent : T.textMuted, border: `1px solid ${addType === k ? T.accent : T.border}` }}>+ {l}</button>))}</div>
+            </div>
+            {addType && addType !== "unit" && (<div className="mt-4 pt-3 space-y-3" style={{ borderTop: `1px solid ${T.border}` }}>
+              {addType === "person" && (<><Field label="Type"><Select value={af.ptype || "owner"} onChange={(e) => setAf({ ...af, ptype: e.target.value })}><option value="owner">Owner</option><option value="tenant">Tenant</option><option value="property_manager">Property manager</option><option value="emergency_contact">Emergency contact</option></Select></Field>{AF("Full name", "name")}{AF("Email", "email")}{AF("Phone", "phone")}</>)}
+              {addType === "pet" && (<>{AF("Pet type", "ptype", "Dog")}{AF("Name", "name", "Rex")}{AF("Breed", "breed", "Cavoodle")}</>)}
+              {addType === "vehicle" && (<div className="grid grid-cols-2 gap-3">{AF("Make", "make", "Toyota")}{AF("Model", "model", "RAV4")}{AF("Colour", "colour", "White")}{AF("Rego", "rego", "123ABC")}{AF("Parking bay", "bay", "B2-14")}</div>)}
+              {addType === "key" && (<><Field label="Type"><Select value={af.ptype || "key"} onChange={(e) => setAf({ ...af, ptype: e.target.value })}><option value="key">Key</option><option value="fob">Fob</option><option value="remote">Remote</option><option value="swipe_card">Swipe card</option><option value="digital_card">Digital card</option></Select></Field>{AF("Identifier / serial", "ident", "F-9981")}{AF("Label", "label", "Lobby / garage")}<Field label="Issued to (app member — they'll confirm receipt in-app)"><Select value={af.member || ""} onChange={(e) => setAf({ ...af, member: e.target.value })}><option value="">— not an app member —</option>{(store.users || []).filter((m) => m.buildingId === buildingId).map((m) => (<option key={m.id} value={m.id}>{m.name}{m.unit ? ` · Unit ${m.unit}` : ""}</option>))}</Select></Field>{!af.member && AF("Issued to (name)", "name")}</>)}
+              {addType === "breach" && (<>{AF("By-law reference", "ref", "By-law 12 (Noise)")}{AF("Description", "desc")}{AF("Date", "date", "", "date")}</>)}
+              <div className="flex gap-2"><Btn grad onClick={addRecord}>Add</Btn><Btn kind="ghost" onClick={() => setAddType("")}>Cancel</Btn></div>
+            </div>)}
+          </Card>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Section title="Owners & tenants" rows={(hc.people || []).concat([])} empty="No people recorded against this unit." render={(p) => line(`${p.full_name} · ${(p.person_type || "").replace(/_/g, " ")}`, [p.email, p.phone].filter(Boolean).join(" · "), p.id)} />
+            <Section title="App members at this unit" rows={hc.residents_directory} empty="No signed-up residents list this unit." render={(m, i) => line(`${m.full_name} · ${ROLE_LABEL[m.role] || m.role}`, [m.email, m.phone].filter(Boolean).join(" · "), i)} />
+            <Section title="Pets" rows={hc.pets} render={(p) => line(`${p.name || p.pet_type}${p.breed ? ` · ${p.breed}` : ""}`, `${p.pet_type || ""} · ${p.approval_status}`, p.id)} />
+            <Section title="Vehicles & parking" rows={hc.vehicles} render={(v) => line(`${v.make} ${v.model} · ${(v.registration || "").toUpperCase()}`, `${v.colour || ""}${v.parking_bay ? ` · Bay ${v.parking_bay}` : ""}`, v.id)} />
+            <Section title="Keys, fobs & cards" rows={hc.access_items} render={(a) => line(`${a.item_type.replace(/_/g, " ")}${a.identifier ? ` · ${a.identifier}` : ""}${a.label ? ` — ${a.label}` : ""}`, `${a.status}${a.issued_to ? ` · ${a.issued_to}` : ""}${a.ack_at ? ` · receipt confirmed ${fmtDate((a.ack_at || "").slice(0, 10))}` : a.issued_to_user_id ? " · awaiting receipt confirmation" : ""}`, a.id)} />
+            <Section title="By-law breaches" rows={hc.breaches} empty="No breaches on record." render={(b) => line(`${b.bylaw_ref || "Breach"} · ${b.status.replace(/_/g, " ")}`, `${b.description || ""}${b.occurred_at ? ` · ${fmtDate(b.occurred_at)}` : ""}`, b.id)} />
+            <Section title="Disputes" rows={hc.disputes} empty="No disputes involve this unit." render={(d) => line(d.ref || d.id, (d.data && d.data.title) || "", d.id)} />
+            <Section title="Applications & bookings" rows={hc.applications} render={(a) => line(`${a.title || a.category}`, `${a.status.replace(/_/g, " ")} · ${fmtDate((a.submitted_at || "").slice(0, 10))}`, a.id)} />
+          </div>
+        </>)}
       </Wrap>
     </div>
   );

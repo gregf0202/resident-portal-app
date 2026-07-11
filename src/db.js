@@ -339,6 +339,139 @@ export async function setInvoiceStatus(id, status) {
   if (error) throw error;
 }
 
+// ---- Unit Search / unit registry (committee) ---------------------------
+// One call returns everything captured for a unit: people, pets, vehicles,
+// keys & fobs, breaches, disputes and applications. RLS keeps it committee-only.
+export async function unitHealthCheck(bid, unitNumber) {
+  const { data, error } = await supabase.rpc("unit_health_check", { p_building: bid, p_unit: unitNumber });
+  if (error) throw error;
+  return data;
+}
+export async function listUnits(bid) {
+  const { data, error } = await supabase.from("units").select("*").eq("building_id", bid).order("unit_number");
+  if (error) throw error;
+  return data || [];
+}
+export async function createUnit(bid, unit_number, lot_number, parking_spaces) {
+  const { error } = await supabase.from("units").insert({ building_id: bid, unit_number, lot_number: lot_number || null, parking_spaces: Number(parking_spaces) || 0 });
+  if (error) throw error;
+  audit(bid, "unit.created", unit_number);
+}
+export async function addUnitPerson(bid, unitId, row) {
+  const { error } = await supabase.from("unit_people").insert({ unit_id: unitId, ...row });
+  if (error) throw error;
+  audit(bid, "unit.person_added", row.full_name);
+}
+export async function addUnitPet(bid, unitId, row) {
+  const { error } = await supabase.from("unit_pets").insert({ unit_id: unitId, ...row });
+  if (error) throw error;
+  audit(bid, "unit.pet_added", row.name || row.pet_type);
+}
+export async function addUnitVehicle(bid, unitId, row) {
+  const { error } = await supabase.from("unit_vehicles").insert({ unit_id: unitId, ...row });
+  if (error) throw error;
+  audit(bid, "unit.vehicle_added", row.registration);
+}
+// Keys/fobs/remotes/cards. If issuedToUserId is set the recipient gets an
+// in-app "confirm receipt" prompt (they must have app access to acknowledge).
+export async function addAccessItem(bid, unitId, row) {
+  const { error } = await supabase.from("unit_access_items").insert({ building_id: bid, unit_id: unitId, ...row });
+  if (error) throw error;
+  audit(bid, "unit.access_item_issued", `${row.item_type} ${row.identifier || ""}`.trim());
+}
+export async function updateAccessItemStatus(id, status) {
+  const patch = { status };
+  if (status === "returned") patch.returned_at = new Date().toISOString().slice(0, 10);
+  const { error } = await supabase.from("unit_access_items").update(patch).eq("id", id);
+  if (error) throw error;
+}
+export async function acknowledgeAccessItem(itemId) {
+  const { data, error } = await supabase.rpc("acknowledge_access_item", { p_item: itemId });
+  if (error) throw error;
+  return data;
+}
+export async function addUnitBreach(bid, unitId, row) {
+  const { error } = await supabase.from("unit_breaches").insert({ building_id: bid, unit_id: unitId, ...row });
+  if (error) throw error;
+  audit(bid, "unit.breach_recorded", row.bylaw_ref || "");
+}
+
+// ---- Applications & Bookings --------------------------------------------
+// Unified table: kind 'application' | 'booking', category-specific fields in
+// details jsonb. Submission alerts the committee; decisions alert the
+// applicant; approved parking applications auto-issue a permit (DB triggers).
+export async function listApplications(bid) {
+  const { data, error } = await supabase.from("applications").select("*").eq("building_id", bid).order("submitted_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function createApplication(bid, authUserId, unitId, kind, category, title, details) {
+  const { data, error } = await supabase.from("applications").insert({
+    building_id: bid, unit_id: unitId || null, kind, category,
+    title: title || null, details: details || {}, status: "submitted", submitted_by: authUserId,
+  }).select("id").single();
+  if (error) throw error;
+  audit(bid, "application.submitted", title || category);
+  return data.id;
+}
+export async function decideApplication(bid, id, approve, note, authUserId) {
+  const { error } = await supabase.from("applications").update({
+    status: approve ? "approved" : "declined",
+    decided_by: authUserId, decided_at: new Date().toISOString(), decision_note: note || null,
+  }).eq("id", id);
+  if (error) throw error;
+  audit(bid, approve ? "application.approved" : "application.declined", id);
+}
+export async function withdrawApplication(bid, id) {
+  const { error } = await supabase.from("applications").update({ status: "withdrawn" }).eq("id", id);
+  if (error) throw error;
+  audit(bid, "application.withdrawn", id);
+}
+export async function listApplicationAttachments(applicationIds) {
+  if (!applicationIds.length) return [];
+  const { data, error } = await supabase.from("application_attachments").select("*").in("application_id", applicationIds);
+  if (error) throw error;
+  return data || [];
+}
+// Media bucket: images, video and documents (quotes etc.), member-scoped paths.
+export async function uploadMedia(bid, area, file) {
+  const safe = (file.name || "file").replace(/[^\w.\-]+/g, "_").slice(0, 80);
+  const path = `${bid}/${area}/${(crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2))}-${safe}`;
+  const { error } = await supabase.storage.from("media").upload(path, file, { upsert: false });
+  if (error) throw error;
+  const kind = /^image\//.test(file.type) ? "image" : /^video\//.test(file.type) ? "video" : "document";
+  return { name: file.name, path, kind };
+}
+export async function mediaUrl(path) {
+  const { data, error } = await supabase.storage.from("media").createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+export async function addApplicationAttachment(applicationId, up) {
+  const { error } = await supabase.from("application_attachments").insert({
+    application_id: applicationId, file_name: up.name, file_kind: up.kind, storage_path: up.path,
+  });
+  if (error) throw error;
+}
+// Parking permits (auto-issued on approval). PDF is generated on demand by
+// the permit-pdf edge function, fetched with the caller's session token.
+export async function listPermits(bid) {
+  const { data, error } = await supabase.from("parking_permits").select("*").eq("building_id", bid).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function openPermitPdf(permitId) {
+  const { data: s } = await supabase.auth.getSession();
+  const token = s && s.session ? s.session.access_token : "";
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/permit-pdf?id=${permitId}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY } });
+  if (!res.ok) throw new Error("Couldn't generate the permit PDF");
+  const blob = await res.blob();
+  const obj = URL.createObjectURL(blob);
+  window.open(obj, "_blank");
+  setTimeout(() => URL.revokeObjectURL(obj), 60000);
+}
+
 // ---- platform settings (invoice issuer + payment details) ----
 export async function loadPlatformSettings() {
   const { data, error } = await supabase.from("platform_settings").select("data").eq("id", "singleton").maybeSingle();
