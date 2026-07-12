@@ -4,13 +4,60 @@ import { T } from "../theme.js";
 import AnimatedHeader from "./AnimatedHeader.jsx";
 import { Card, Btn, Field, Input, Select, Badge, Empty } from "./ui.jsx";
 import BillingPanel from "./BillingPanel.jsx";
+import { loadBillingSummary } from "../db.js";
 import { loadAllBuildings, createBuilding, joinAsAdmin, listMembers, addMember, addMembersBulk, updateMember, removeMember, sendInvite, sendInvites } from "../db.js";
 import { parseCSV, toCSV, downloadCSV, readFileText } from "../csv.js";
 
 const ROLES = [["bcc", "Committee"], ["admin", "Administrator"], ["manager", "Building manager"], ["strata", "Strata manager"], ["owner", "Owner"], ["tenant", "Tenant"]];
 
+const AU_STATES = ["QLD", "NSW", "VIC", "SA", "WA", "TAS", "NT", "ACT"];
+function groupByState(list) {
+  const stateOf = (b) => { const m = String(b.address || "").toUpperCase().match(/\b(QLD|NSW|VIC|SA|WA|TAS|NT|ACT)\b/); return m ? m[1] : "OTHER"; };
+  const groups = {};
+  [...list].sort((a, b2) => a.name.localeCompare(b2.name)).forEach((b) => { const st = stateOf(b); (groups[st] = groups[st] || []).push(b); });
+  return [...AU_STATES.filter((st) => groups[st]), ...(groups.OTHER ? ["OTHER"] : [])].map((st) => [st === "OTHER" ? "No state on record" : st, groups[st]]);
+}
+function BillingSummaryCard() {
+  const [rows, setRows] = React.useState(null);
+  const [open, setOpen] = React.useState(false);
+  React.useEffect(() => { loadBillingSummary().then(setRows).catch(() => setRows([])); }, []);
+  const money2 = (n) => "$" + Number(n || 0).toLocaleString("en-AU", { minimumFractionDigits: 2 });
+  if (!rows) return null;
+  const totalBilled = rows.reduce((a, r) => a + Number(r.billed || 0), 0);
+  const totalPaid = rows.reduce((a, r) => a + Number(r.paid || 0), 0);
+  const totalOut = rows.reduce((a, r) => a + Number(r.outstanding || 0), 0);
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700 }}>Billing & income</div>
+          <div style={{ fontSize: 12, color: T.textMuted }}>All buildings · billed {money2(totalBilled)} · collected {money2(totalPaid)} · outstanding {money2(totalOut)}</div>
+        </div>
+        <button onClick={() => setOpen(!open)} style={{ background: "transparent", color: T.accent, border: `1px solid ${T.border}`, borderRadius: 10, padding: "6px 10px", fontSize: 13 }}>{open ? "Hide" : "By building & month"}</button>
+      </div>
+      {open && (rows.length === 0 ? <div style={{ fontSize: 13, color: T.textMuted, marginTop: 10 }}>No invoices yet.</div> : (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+            <thead><tr style={{ color: T.textMuted, textAlign: "left" }}>{["Building", "Month", "Invoices", "Billed", "Paid", "Outstanding", "Refunded"].map((h) => <th key={h} style={{ padding: "6px 8px", borderBottom: `1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+            <tbody>{rows.map((r, i) => (
+              <tr key={i}>
+                <td style={{ padding: "6px 8px", borderBottom: `1px dashed ${T.border}` }}>{r.building_name}</td>
+                <td style={{ padding: "6px 8px", borderBottom: `1px dashed ${T.border}` }}>{r.month}</td>
+                <td style={{ padding: "6px 8px", borderBottom: `1px dashed ${T.border}` }}>{r.invoices}</td>
+                <td style={{ padding: "6px 8px", borderBottom: `1px dashed ${T.border}` }}>{money2(r.billed)}</td>
+                <td style={{ padding: "6px 8px", borderBottom: `1px dashed ${T.border}`, color: "#34d399" }}>{money2(r.paid)}</td>
+                <td style={{ padding: "6px 8px", borderBottom: `1px dashed ${T.border}`, color: Number(r.outstanding) > 0 ? "#f59e0b" : undefined }}>{money2(r.outstanding)}</td>
+                <td style={{ padding: "6px 8px", borderBottom: `1px dashed ${T.border}` }}>{money2(r.refunded)}</td>
+              </tr>))}</tbody>
+          </table>
+        </div>))}
+    </Card>
+  );
+}
+
 export default function PlatformConsole({ authUser, profileName, onOpen, onSignOut }) {
   const [buildings, setBuildings] = useState([]);
+  const [bq, setBq] = useState("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [showNew, setShowNew] = useState(false);
@@ -67,6 +114,7 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
       </AnimatedHeader>
 
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 18px 60px" }}>
+        <BillingSummaryCard />
         {showPw && (
           <Card style={{ padding: 18, marginBottom: 16 }}>
             <Field label="New password (min 8 characters)">
@@ -101,9 +149,17 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
           </Card>
         )}
 
+        {!loading && buildings.length > 3 && (
+          <Input placeholder="Search buildings by name…" value={bq} onChange={(e) => setBq(e.target.value)} style={{ marginBottom: 4 }} />
+        )}
         {loading ? <Empty title="Loading…" hint="Fetching your buildings." />
           : buildings.length === 0 ? <Empty title="No buildings yet" hint="Create your first building above." />
-          : buildings.map((b) => (
+          : groupByState(buildings.filter((b) => !bq.trim() || b.name.toLowerCase().includes(bq.trim().toLowerCase()))).map(([state, list]) => (
+            <div key={state}>
+              <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: T.textMuted, margin: "16px 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
+                <span>{state}</span><span style={{ flex: 1, borderTop: `1px solid ${T.border}` }} /><span>{list.length}</span>
+              </div>
+              {list.map((b) => (
             <Card key={b.id} style={{ padding: 16, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 180 }}>
@@ -118,6 +174,8 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
               {managing === b.id && <MembersPanel bid={b.id} onChanged={refresh} />}
               {billingFor === b.id && <BillingPanel bid={b.id} building={{ name: b.name, address: b.address }} />}
             </Card>
+              ))}
+            </div>
           ))}
       </div>
     </div>

@@ -501,6 +501,12 @@ export async function castVote(motionId, authUserId, vote, comment, proxy) {
   const { error } = await supabase.from("motion_votes").insert(row);
   if (error) throw error;
 }
+export async function updateMotionConditions(motionId, conditions) {
+  const { data: m, error: ge } = await supabase.from("motions").select("details").eq("id", motionId).single();
+  if (ge) throw ge;
+  const { error } = await supabase.from("motions").update({ details: { ...(m.details || {}), conditions } }).eq("id", motionId).eq("status", "open");
+  if (error) throw error;
+}
 export async function withdrawMotion(id) {
   const { error } = await supabase.from("motions").update({ status: "withdrawn", decided_at: new Date().toISOString() }).eq("id", id).eq("status", "open");
   if (error) throw error;
@@ -588,6 +594,114 @@ export async function deleteContractor(bid, id) {
   audit(bid, "contractor.deleted", id);
 }
 
+// ---- Correspondence Hub -----------------------------------------------------
+// Committee / MSC / BM two-way email record. Reads come straight from the
+// RLS-protected tables; SENDING routes through the `send-correspondence` edge
+// function (which holds the Resend key + service role and enforces the same
+// committee check). Messages are append-only at the database level.
+
+// Thread list for a building, newest activity first, with the party on each.
+export async function listCorrThreads(bid) {
+  const { data, error } = await supabase
+    .from("correspondence_threads")
+    .select("id, subject, status, visibility, context_type, context_id, last_activity_at, created_at, correspondence_contacts(name, email, org, party_type)")
+    .eq("building_id", bid)
+    .order("last_activity_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map((t) => ({
+    id: t.id, subject: t.subject, status: t.status, visibility: t.visibility,
+    contextType: t.context_type, contextId: t.context_id,
+    lastActivityAt: t.last_activity_at, createdAt: t.created_at,
+    contact: t.correspondence_contacts
+      ? { name: t.correspondence_contacts.name, email: t.correspondence_contacts.email, org: t.correspondence_contacts.org, partyType: t.correspondence_contacts.party_type }
+      : null,
+  }));
+}
+
+// One thread with its full message trail + attachments.
+export async function getCorrThread(threadId) {
+  const { data: thread, error: te } = await supabase
+    .from("correspondence_threads")
+    .select("id, building_id, subject, status, visibility, context_type, context_id, created_by, created_at, last_activity_at, correspondence_contacts(name, email, org, phone, party_type)")
+    .eq("id", threadId).single();
+  if (te) throw te;
+  const { data: messages, error: me } = await supabase
+    .from("correspondence_messages")
+    .select("id, direction, from_name, from_email, to_email, cc, subject, body_text, body_html, delivery_status, deleted_at, created_at, correspondence_attachments(id, file_name, mime, storage_path, size)")
+    .eq("thread_id", threadId)
+    .order("created_at", { ascending: true });
+  if (me) throw me;
+  return {
+    thread: {
+      id: thread.id, buildingId: thread.building_id, subject: thread.subject, status: thread.status,
+      visibility: thread.visibility, contextType: thread.context_type, contextId: thread.context_id,
+      createdBy: thread.created_by, createdAt: thread.created_at, lastActivityAt: thread.last_activity_at,
+      contact: thread.correspondence_contacts || null,
+    },
+    messages: (messages || []).map((m) => ({
+      id: m.id, direction: m.direction, fromName: m.from_name, fromEmail: m.from_email, toEmail: m.to_email,
+      cc: m.cc, subject: m.subject, bodyText: m.body_text, bodyHtml: m.body_html,
+      deliveryStatus: m.delivery_status, deletedAt: m.deleted_at, createdAt: m.created_at,
+      attachments: (m.correspondence_attachments || []).map((a) => ({ id: a.id, fileName: a.file_name, mime: a.mime, storagePath: a.storage_path, size: a.size })),
+    })),
+  };
+}
+
+// External parties (strata manager, insurer, contractor, …) for a building.
+export async function listCorrContacts(bid) {
+  const { data, error } = await supabase
+    .from("correspondence_contacts")
+    .select("id, name, org, email, phone, party_type, notes")
+    .eq("building_id", bid).order("name");
+  if (error) throw error;
+  return (data || []).map((c) => ({ id: c.id, name: c.name, org: c.org, email: c.email, phone: c.phone, partyType: c.party_type, notes: c.notes }));
+}
+
+export async function saveCorrContact(bid, c) {
+  const row = { building_id: bid, name: c.name, org: c.org || null, email: c.email || null, phone: c.phone || null, party_type: c.partyType || "other", notes: c.notes || null };
+  const { data, error } = c.id
+    ? await supabase.from("correspondence_contacts").update(row).eq("id", c.id).select("id").single()
+    : await supabase.from("correspondence_contacts").insert(row).select("id").single();
+  if (error) throw error;
+  audit(bid, c.id ? "correspondence.contact_updated" : "correspondence.contact_added", c.name);
+  return data.id;
+}
+
+// Send a new message or reply on an existing thread. `payload` shape:
+// { buildingId, threadId?, contact:{id?|name,email,org,party_type}, subject,
+//   bodyText, bodyHtml?, contextType?, contextId?, visibility?,
+//   restrictedMemberIds?, attachments?:[{filename,contentBase64,mime}] }
+export async function sendCorrespondence(payload) {
+  const { data, error } = await supabase.functions.invoke("send-correspondence", { body: payload });
+  if (error) throw error;
+  if (data && data.error) throw new Error(data.error);
+  return data; // { ok, threadId, messageId, deliveryStatus }
+}
+
+// Update a thread's status / visibility / subject.
+export async function updateCorrThread(threadId, patch) {
+  const row = {};
+  if (patch.status !== undefined) row.status = patch.status;
+  if (patch.visibility !== undefined) row.visibility = patch.visibility;
+  if (patch.subject !== undefined) row.subject = patch.subject;
+  const { error } = await supabase.from("correspondence_threads").update(row).eq("id", threadId);
+  if (error) throw error;
+}
+
+// Whitelist for a restricted thread (replaces the current set).
+export async function setCorrThreadMembers(threadId, userIds) {
+  await supabase.from("correspondence_thread_members").delete().eq("thread_id", threadId);
+  const rows = (userIds || []).filter(Boolean).map((u) => ({ thread_id: threadId, user_id: u }));
+  if (rows.length) { const { error } = await supabase.from("correspondence_thread_members").insert(rows); if (error) throw error; }
+}
+
+// Time-limited signed URL for a private-bucket attachment.
+export async function corrAttachmentUrl(storagePath) {
+  const { data, error } = await supabase.storage.from("correspondence").createSignedUrl(storagePath, 3600);
+  if (error) throw error;
+  return data?.signedUrl || "";
+}
+
 // ---- monthly walk-through checklist ----------------------------------------
 export async function listWalkItems(bid) {
   const { data, error } = await supabase.from("walkthrough_items").select("*").eq("building_id", bid).eq("active", true).order("sort");
@@ -627,6 +741,228 @@ export async function completeWalk(bid, walkId, summary) {
   audit(bid, "walkthrough.completed", walkId);
 }
 
+// ---- in-app alerts ----------------------------------------------------------
+export async function listNotifications(bid) {
+  const { data, error } = await supabase.from("app_notifications").select("*").eq("building_id", bid).order("created_at", { ascending: false }).limit(100);
+  if (error) throw error;
+  return data || [];
+}
+export async function markNotificationRead(id) {
+  const { error } = await supabase.from("app_notifications").update({ read_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw error;
+}
+export async function markAllNotificationsRead(bid) {
+  const { error } = await supabase.from("app_notifications").update({ read_at: new Date().toISOString() }).eq("building_id", bid).is("read_at", null);
+  if (error) throw error;
+}
+
+// ---- motion clarifications (ask before you vote) ---------------------------
+export async function listMotionComments(motionIds) {
+  if (!motionIds.length) return [];
+  const { data, error } = await supabase.from("motion_comments").select("*").in("motion_id", motionIds).order("created_at");
+  if (error) throw error;
+  return data || [];
+}
+export async function addMotionComment(motionId, body, authorName) {
+  const { error } = await supabase.from("motion_comments").insert({ motion_id: motionId, body, author_name: authorName || null });
+  if (error) throw error;
+}
+
+// ---- walkthrough checklist editing + photo evidence -------------------------
+export async function addWalkItem(bid, area, item) {
+  const { error } = await supabase.from("walkthrough_items").insert({ building_id: bid, area, item, sort: 999 });
+  if (error) throw error;
+  audit(bid, "walkthrough.item_added", item);
+}
+export async function removeWalkItem(bid, id) {
+  const { error } = await supabase.from("walkthrough_items").update({ active: false }).eq("id", id);
+  if (error) throw error;
+  audit(bid, "walkthrough.item_removed", id);
+}
+export async function setWalkResultPhoto(walkId, itemId, result, note, photoPath) {
+  const { error } = await supabase.from("walkthrough_results").upsert(
+    { walkthrough_id: walkId, item_id: itemId, result: result || null, note: note || null, photo_path: photoPath || null },
+    { onConflict: "walkthrough_id,item_id" });
+  if (error) throw error;
+}
+export async function setWalkResultMaint(walkId, itemId, maintenanceId) {
+  const { error } = await supabase.from("walkthrough_results").upsert(
+    { walkthrough_id: walkId, item_id: itemId, maintenance_id: maintenanceId },
+    { onConflict: "walkthrough_id,item_id" });
+  if (error) throw error;
+}
+export async function mediaBlob(path) {
+  const { data, error } = await supabase.storage.from("media").download(path);
+  if (error) throw error;
+  return data;
+}
+export async function updateUnitAgent(bid, unitId, agent) {
+  const { error } = await supabase.from("units").update({
+    agent_business: agent.business || null, agent_contact: agent.contact || null,
+    agent_phone: agent.phone || null, agent_email: agent.email || null,
+    agent_note: agent.note || null,
+  }).eq("id", unitId);
+  if (error) throw error;
+  audit(bid, "unit.agent_updated", agent.business || "");
+}
+
+// ---- Stripe billing (payment method setup, refunds, admin summary) ---------
+export async function loadMyBuildingBilling(bid) {
+  const { data } = await supabase.from("building_billing").select("status, trial_end, payment_method_label, preferred_payment_day, admin_monthly, per_unit_monthly, unit_count, gst_rate, gst_mode").eq("building_id", bid).maybeSingle();
+  return data;
+}
+export async function startPaymentSetup(bid) {
+  const { data: s2 } = await supabase.auth.getSession();
+  const token = s2 && s2.session ? s2.session.access_token : "";
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-billing`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "setup", building_id: bid, return_url: window.location.origin }),
+  });
+  const j = await res.json();
+  if (!res.ok || !j.url) throw new Error(j.error || "Couldn't start payment setup");
+  window.location.href = j.url;
+}
+export async function createAdhocInvoice(bid, kind, description, amount) {
+  const { data, error } = await supabase.rpc("create_adhoc_invoice", { p_bid: bid, p_kind: kind, p_description: description, p_amount: Number(amount) });
+  if (error) throw error;
+  return data;
+}
+export async function stripeRefund(invoiceId, amount, description) {
+  const { data: s2 } = await supabase.auth.getSession();
+  const token = s2 && s2.session ? s2.session.access_token : "";
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-billing`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "refund", invoice_id: invoiceId, amount: Number(amount), description }),
+  });
+  const j = await res.json();
+  if (!res.ok) throw new Error(j.error || "Refund failed");
+  return j;
+}
+export async function loadBillingSummary() {
+  const { data, error } = await supabase.rpc("billing_summary");
+  if (error) throw error;
+  return data || [];
+}
+
+// ---- Export Building Data ---------------------------------------------------
+// Clause 4 of the Services Agreement, as a button: everything the building
+// owns, exported to a single multi-sheet Excel workbook (SpreadsheetML — no
+// extra dependencies), including a manifest of every stored file with signed
+// download links. Data out is as easy as data in — by design, from day one.
+const xmlEsc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const sheetXml = (name, rows) => {
+  const cols = rows.length ? [...new Set(rows.flatMap((r) => Object.keys(r)))] : ["(empty)"];
+  const cell = (v) => {
+    if (v != null && typeof v === "object") v = JSON.stringify(v);
+    const isNum = typeof v === "number" && isFinite(v);
+    return `<Cell><Data ss:Type="${isNum ? "Number" : "String"}">${xmlEsc(v)}</Data></Cell>`;
+  };
+  const head = `<Row>${cols.map((c) => `<Cell><Data ss:Type="String">${xmlEsc(c)}</Data></Cell>`).join("")}</Row>`;
+  const body = rows.map((r) => `<Row>${cols.map((c) => cell(r[c])).join("")}</Row>`).join("");
+  return `<Worksheet ss:Name="${xmlEsc(name.slice(0, 31))}"><Table>${head}${body}</Table></Worksheet>`;
+};
+const workbook = (sheets) => `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+${sheets.map(([n, rows]) => sheetXml(n, rows)).join("\n")}
+</Workbook>`;
+const downloadWorkbook = (filename, sheets) => {
+  const blob = new Blob([workbook(sheets)], { type: "application/vnd.ms-excel" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+};
+const CONTENT_EXPORT = CONTENT; // jsonb content tables exported with data spread into columns
+
+export async function exportBuildingData(bid, buildingName, onProgress) {
+  const say = (m) => { try { onProgress && onProgress(m); } catch (e) {} };
+  const all = async (q) => { const { data, error } = await q; if (error) throw error; return data || []; };
+  const byB = (t) => all(supabase.from(t).select("*").eq("building_id", bid));
+  const sheets = [];
+
+  say("Registers…");
+  const units = await byB("units");
+  const unitIds = units.map((u) => u.id);
+  const child = async (t) => unitIds.length ? all(supabase.from(t).select("*").in("unit_id", unitIds)) : [];
+  sheets.push(["Units", units], ["Unit People", await child("unit_people")], ["Unit Pets", await child("unit_pets")],
+    ["Unit Vehicles", await child("unit_vehicles")], ["Keys & Fobs", await byB("unit_access_items")], ["Breaches", await byB("unit_breaches")]);
+
+  say("Applications & permits…");
+  const apps = await byB("applications");
+  sheets.push(["Applications", apps],
+    ["Application Files", apps.length ? await all(supabase.from("application_attachments").select("*").in("application_id", apps.map((a) => a.id))) : []],
+    ["Parking Permits", await byB("parking_permits")]);
+
+  say("Governance…");
+  const motions = await byB("motions");
+  const mids = motions.map((m) => m.id);
+  sheets.push(["Motions", motions],
+    ["Votes", mids.length ? await all(supabase.from("motion_votes").select("*").in("motion_id", mids)) : []],
+    ["Motion Questions", mids.length ? await all(supabase.from("motion_comments").select("*").in("motion_id", mids)) : []],
+    ["Proxies", await byB("proxy_appointments")]);
+
+  say("Maintenance & registers…");
+  const walks = await byB("walkthroughs");
+  sheets.push(["Maintenance Activity", await byB("maintenance_activity")], ["Quotes", await byB("maintenance_quotes")],
+    ["Contracts", await byB("contracts")], ["Contractors", await byB("contractors")],
+    ["Walkthrough Items", await byB("walkthrough_items")], ["Walkthroughs", walks],
+    ["Walkthrough Results", walks.length ? await all(supabase.from("walkthrough_results").select("*").in("walkthrough_id", walks.map((w) => w.id))) : []]);
+
+  say("Community & records…");
+  const groups = await byB("groups");
+  const threads = await byB("threads");
+  sheets.push(["Groups", groups],
+    ["Group Members", groups.length ? await all(supabase.from("group_members").select("*").in("group_id", groups.map((g) => g.id))) : []],
+    ["Threads", threads],
+    ["Thread Messages", threads.length ? await all(supabase.from("thread_messages").select("*").in("thread_id", threads.map((t) => t.id))) : []],
+    ["Members", await byB("memberships")], ["Alerts", await byB("app_notifications")],
+    ["Disputes", await byB("disputes")], ["Dispute Events", await byB("dispute_events")],
+    ["Audit Trail", await all(supabase.from("audit_log").select("*").eq("building_id", bid).order("created_at"))]);
+
+  say("Notices, bookings, documents…");
+  for (const t of CONTENT_EXPORT) {
+    const rows = (await all(supabase.from(t).select("id, data, created_at").eq("building_id", bid))).map((r) => ({ id: r.id, created_at: r.created_at, ...(r.data || {}) }));
+    sheets.push([t.charAt(0).toUpperCase() + t.slice(1), rows]);
+  }
+
+  say("Stored files…");
+  const fileRows = [];
+  for (const bucket of ["attachments", "media", "building-files"]) {
+    try {
+      const tops = await supabase.storage.from(bucket).list(bid, { limit: 1000 });
+      for (const entry of tops.data || []) {
+        const isFolder = !entry.id;
+        const paths = isFolder
+          ? ((await supabase.storage.from(bucket).list(`${bid}/${entry.name}`, { limit: 1000 })).data || []).map((f) => `${bid}/${entry.name}/${f.name}`)
+          : [`${bid}/${entry.name}`];
+        for (const path of paths.slice(0, 400)) {
+          let url = "";
+          try { const su = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60 * 24 * 7); url = (su.data && su.data.signedUrl) || ""; } catch (e) {}
+          fileRows.push({ bucket, path, download_link_7_days: url });
+        }
+      }
+    } catch (e) { /* bucket not accessible for this role — skip */ }
+  }
+  sheets.unshift(
+    ["About This Export", [
+      { field: "Building", value: buildingName },
+      { field: "Exported", value: new Date().toISOString() },
+      { field: "Ownership", value: "All data in this workbook is the property of the Building's Body Corporate (NaloHub Services Agreement, clause 4)." },
+      { field: "Contents", value: "One sheet per register, all records for this building only. The Stored Files sheet lists every uploaded document/photo/video with a 7-day download link." },
+      { field: "Contact", value: "info@nalohub.com" },
+    ]],
+  );
+  sheets.push(["Stored Files", fileRows]);
+
+  const safe = (buildingName || "building").replace(/[^\w-]+/g, "-").toLowerCase();
+  downloadWorkbook(`nalohub-export-${safe}-${new Date().toISOString().slice(0, 10)}.xls`, sheets);
+  audit(bid, "building.data_exported", `${sheets.length} sheets`);
+  return { sheets: sheets.length, files: fileRows.length };
+}
+
 // ---- platform settings (invoice issuer + payment details) ----
 export async function loadPlatformSettings() {
   const { data, error } = await supabase.from("platform_settings").select("data").eq("id", "singleton").maybeSingle();
@@ -636,4 +972,221 @@ export async function loadPlatformSettings() {
 export async function savePlatformSettings(d) {
   const { error } = await supabase.from("platform_settings").upsert({ id: "singleton", data: d, updated_at: new Date().toISOString() });
   if (error) throw error;
+}
+
+// ============================================================================
+// DEMO MODE — demo.nalohub.com runs this same file with VITE_DEMO_MODE=true.
+// Every new-feature function below is re-bound to an in-memory dummy dataset,
+// so the demo mirrors the production app screen-for-screen with sample data.
+// ============================================================================
+const DEMO_MODE = String(import.meta.env.VITE_DEMO_MODE || "").toLowerCase() === "true" || !import.meta.env.VITE_SUPABASE_URL;
+export const DEMO_UID = "00000000-demo-user-0000-000000000001";
+
+if (DEMO_MODE) {
+  const id = () => "d" + Math.random().toString(36).slice(2, 10);
+  const now = () => new Date().toISOString();
+  const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); };
+  const dAhead = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  const files = {}; // fake storage: path -> object URL
+
+  const u12 = { id: "unit-12", unit_number: "12", lot_number: "Lot 12", parking_spaces: 2, agent_business: "Coastal Property Management", agent_contact: "Mia Chen", agent_phone: "07 5444 1200", agent_email: "mia@coastalpm.com.au", agent_note: "Lease ends 31 March. Contact agent for any entry or maintenance access.", notes: null };
+  const u5 = { id: "unit-5", unit_number: "5", lot_number: "Lot 5", parking_spaces: 1, agent_business: "", agent_contact: "", agent_phone: "", agent_email: "" };
+  const DS = {
+    units: [u12, u5, { id: "unit-22", unit_number: "22", lot_number: "Lot 22", parking_spaces: 1 }],
+    people: [
+      { id: id(), unit_id: "unit-12", person_type: "owner", full_name: "Owen Chandler", email: "owen@example.com", phone: "0400 111 222", is_current: true },
+      { id: id(), unit_id: "unit-12", person_type: "tenant", full_name: "Tina Marsh", email: "tina@example.com", phone: "0400 333 444", is_current: true },
+      { id: id(), unit_id: "unit-5", person_type: "owner", full_name: "Betty Nguyen", email: "betty@example.com", phone: "0400 555 666", is_current: true },
+    ],
+    pets: [{ id: id(), unit_id: "unit-12", pet_type: "dog", name: "Rex", breed: "Cavoodle", approval_status: "approved" }],
+    vehicles: [{ id: id(), unit_id: "unit-12", make: "Toyota", model: "RAV4", colour: "White", registration: "123ABC", parking_bay: "B2-14" }],
+    access: [
+      { id: id(), unit_id: "unit-12", item_type: "fob", identifier: "F-9981", label: "Lobby & garage", status: "issued", issued_to: "Tina Marsh", ack_at: daysAgo(3) },
+      { id: id(), unit_id: "unit-12", item_type: "key", identifier: "K-012", label: "Front door", status: "issued", issued_to: "Owen Chandler", issued_to_user_id: "x", ack_at: null },
+      { id: id(), unit_id: "unit-5", item_type: "swipe_card", identifier: "SC-445", label: "Gym level", status: "issued", issued_to: "Betty Nguyen" },
+    ],
+    breaches: [{ id: id(), unit_id: "unit-12", bylaw_ref: "By-law 12 (Noise)", description: "Late-night noise complaint — resolved after friendly chat.", status: "remedied", occurred_at: dAhead(-40).slice(0, 10) }],
+    applications: [
+      { id: "app-1", unit_id: "unit-12", kind: "application", category: "pet", title: "Pet approval — Luna (ragdoll cat)", details: { pet_type: "cat", name: "Luna", breed: "Ragdoll", unit: "12", description: "Indoor cat, desexed and microchipped." }, status: "submitted", submitted_by: "u-owner", submitted_at: daysAgo(1), decision_note: null },
+      { id: "app-2", unit_id: "unit-12", kind: "application", category: "parking_permit", title: "Parking permit — Mazda CX-5 (456XYZ)", details: { vehicle_make: "Mazda", vehicle_model: "CX-5", vehicle_colour: "Blue", vehicle_rego: "456XYZ", date_from: dAhead(-20), date_to: dAhead(345), unit: "12" }, status: "approved", submitted_by: DEMO_UID, submitted_at: daysAgo(20), decided_at: daysAgo(19), decision_note: "Approved for 12 months" },
+      { id: "app-3", unit_id: "unit-5", kind: "application", category: "lot_improvement", title: "Bathroom renovation — Unit 5", details: { unit: "5", description: "Full bathroom renovation incl. waterproofing. Two quotes attached.", conditions: ["All work must be carried out by licensed and insured contractors.", "Work is permitted Monday–Friday 7am–5pm and Saturday 8am–4pm only.", "Common property must be protected during works and left clean and undamaged."] }, status: "approved", submitted_by: "u-betty", submitted_at: daysAgo(9), decided_at: daysAgo(3), decision_note: "Decided by BCC vote: 5 yes / 1 no / 0 abstained of 6 members — approval subject to the attached conditions" },
+    ],
+    appAtts: [{ id: id(), application_id: "app-3", file_name: "bathroom-quote-AquaBuild.pdf", file_kind: "document", storage_path: "demo/quote1" }],
+    permits: [{ id: "permit-1", application_id: "app-2", permit_no: "PP-0007", unit_number: "12", vehicle_make: "Mazda", vehicle_model: "CX-5", vehicle_colour: "Blue", vehicle_rego: "456XYZ", date_from: dAhead(-20), date_to: dAhead(345), approval_date: dAhead(-19), status: "active" }],
+    motions: [
+      { id: "mo-1", title: "Approve: Pet approval — Luna (ragdoll cat)", description: "Indoor cat, desexed and microchipped.", context_type: "application", context_id: "app-1", details: { category: "pet", unit: "12", conditions: ["The animal must be kept within the lot and under control on common property at all times.", "The animal must not cause nuisance, noise or interference with other residents.", "All animal waste must be removed and disposed of appropriately.", "Approval is specific to the animal named in the application and is not transferable."] }, eligible_count: 6, threshold: 4, status: "open", opened_by: "u-owner", opened_at: daysAgo(1), outcome_note: null },
+      { id: "mo-2", title: "Accept Bright Spark quote $2,350 — Car park gate motor", description: "Gate sticks halfway with grinding noise. Sub-committee recommends preferred electrician.", context_type: "maintenance", context_id: "m-demo", details: { quote_id: "q-1", trail: ["triage: High priority — gate could fail closed. Owen coordinating quotes.", "quote added: Quote from Bright Spark Electrical: $2350", "quote added: Quote from GateWorks QLD: $3100", "recommendation: Sub-committee recommends Bright Spark (preferred, 5-star)."] }, eligible_count: 6, threshold: 4, status: "passed", opened_by: DEMO_UID, opened_at: daysAgo(6), decided_at: daysAgo(4), outcome_note: "4 yes / 1 no / 1 abstained of 6 members" },
+    ],
+    votes: [
+      { id: id(), motion_id: "mo-1", voter_user_id: "u-bcc2", vote: "yes", comment: "Lovely quiet breed.", created_at: daysAgo(1) },
+      { id: id(), motion_id: "mo-1", voter_user_id: "u-bcc3", vote: "yes", comment: null, created_at: daysAgo(0) },
+      { id: id(), motion_id: "mo-2", voter_user_id: "u-bcc2", vote: "yes", comment: "Preferred contractor, fair price.", created_at: daysAgo(5) },
+      { id: id(), motion_id: "mo-2", voter_user_id: "u-bcc3", vote: "yes", comment: null, created_at: daysAgo(5) },
+      { id: id(), motion_id: "mo-2", voter_user_id: "u-bcc4", vote: "yes", comment: null, created_at: daysAgo(5) },
+      { id: id(), motion_id: "mo-2", voter_user_id: "u-bcc5", vote: "yes", comment: null, proxy_for_user_id: "u-bcc6", proxy_appointment_id: "px-1", created_at: daysAgo(4) },
+      { id: id(), motion_id: "mo-2", voter_user_id: "u-bcc5", vote: "no", comment: "Wanted a third quote.", created_at: daysAgo(4) },
+    ],
+    mcomments: [{ id: id(), motion_id: "mo-1", body: "Is the cat registered with council?", author_name: "Priya (Treasurer)", created_at: daysAgo(0) }],
+    proxies: [{ id: "px-1", principal_user_id: "u-bcc6", principal_name: "Harold West", proxy_user_id: "u-bcc5", proxy_name: "Priya Sharma", scope: "committee", date_from: dAhead(-10), date_to: dAhead(4), status: "active", created_at: daysAgo(10) }],
+    mact: {}, quotes: {},
+    contracts: [
+      { id: id(), party_name: "Sunshine Lifts Pty Ltd", party_abn: "11 222 333 444", purpose: "Quarterly lift maintenance and 24hr breakdown response", category: "lift maintenance", start_date: dAhead(-190), end_date: dAhead(40), term_months: 36, auto_renew: true, value_annual: 8400, status: "active", contact_name: "Sam Nguyen", contact_phone: "1300 555 111" },
+      { id: id(), party_name: "CoastClean Services", party_abn: "55 666 777 888", purpose: "Common area cleaning three times weekly", category: "cleaning", start_date: dAhead(-120), end_date: dAhead(245), term_months: 12, auto_renew: false, value_annual: 15600, status: "active", contact_name: "Dana Reid", contact_phone: "0400 777 888" },
+    ],
+    contractors: [
+      { id: "ctr-1", company_name: "Bright Spark Electrical", trade: "electrical", contact_name: "Sam Sparks", phone: "0400 111 222", licence_no: "QLD-EL-12345", insurance_expiry: dAhead(250), status: "preferred", rating: 5 },
+      { id: id(), company_name: "AquaBuild Bathrooms", trade: "plumbing", contact_name: "Jo Pipes", phone: "0400 999 000", licence_no: "QBCC-88123", insurance_expiry: dAhead(35), status: "approved", rating: 4 },
+      { id: id(), company_name: "Fresh Coat Painting", trade: "painting", contact_name: "Pat Roller", phone: "0400 555 666", licence_no: "QBCC-55555", insurance_expiry: dAhead(400), status: "approved", rating: null },
+    ],
+    walkItems: [], walks: [{ id: "walk-1", walk_date: dAhead(-31), attendees: "B Manager (BM), Betty Nguyen (Chair)", status: "completed", summary: "22/22 checked · 1 issue" }], walkResults: { "walk-1": [] },
+    notifications: [
+      { id: id(), kind: "motion_opened", ref_table: "motions", ref_id: "mo-1", title: "Vote required: Approve: Pet approval — Luna", body: "Majority needed: 4 of 6 BCC members.", read_at: null, created_at: daysAgo(1) },
+      { id: id(), kind: "application_submitted", ref_table: "applications", ref_id: "app-1", title: "Application awaiting review", body: "Pet approval — Luna (ragdoll cat) requires a decision", read_at: null, created_at: daysAgo(1) },
+      { id: id(), kind: "motion_decided", ref_table: "motions", ref_id: "mo-2", title: "Motion passed: Accept Bright Spark quote $2,350", body: "4 yes / 1 no / 1 abstained of 6 members", read_at: daysAgo(3), created_at: daysAgo(4) },
+      { id: id(), kind: "maintenance_reported", ref_table: "maintenance", ref_id: "m-demo", title: "New issue: Car park gate motor failing", body: "Gate sticks halfway, grinding noise.", read_at: daysAgo(5), created_at: daysAgo(6) },
+      { id: id(), kind: "access_item_issued", ref_table: "unit_access_items", ref_id: "k1", title: "Confirm receipt: key K-012", body: "Please acknowledge receipt of Front door key in the app.", read_at: null, created_at: daysAgo(2) },
+    ],
+  };
+  const seedTrail = (mid) => ([
+    { id: id(), maintenance_id: mid, kind: "triage", body: "Sub-committee triaged: high priority. Coordinating quotes.", created_at: daysAgo(6) },
+    { id: id(), maintenance_id: mid, kind: "quote_added", body: "Quote from Bright Spark Electrical: $2350", created_at: daysAgo(5) },
+    { id: id(), maintenance_id: mid, kind: "recommendation", body: "Sub-committee recommends Bright Spark Electrical (preferred contractor).", created_at: daysAgo(5) },
+    { id: id(), maintenance_id: mid, kind: "decision", body: "Motion passed: Accept Bright Spark quote $2,350 (4 yes / 1 no of 6 members)", created_at: daysAgo(4) },
+  ]);
+  const seedQuotes = (mid) => ([
+    { id: "q-1", maintenance_id: mid, supplier_name: "Bright Spark Electrical", amount: 2350, contractor_id: "ctr-1", status: "accepted", created_at: daysAgo(5) },
+    { id: id(), maintenance_id: mid, supplier_name: "GateWorks QLD", amount: 3100, status: "rejected", created_at: daysAgo(5) },
+  ]);
+
+  // ---- re-bind the new-feature API to the demo dataset ----
+  unitHealthCheck = async (_b, unitNo) => {
+    const q = String(unitNo || "").trim().toLowerCase();
+    const u = DS.units.find((x) => x.unit_number.toLowerCase() === q);
+    if (!u) return { unit: null, residents_directory: [], people: [], pets: [], vehicles: [], access_items: [], breaches: [], disputes: [], applications: [] };
+    const by = (arr) => arr.filter((r) => r.unit_id === u.id);
+    return { unit: u, people: by(DS.people), residents_directory: [], pets: by(DS.pets), vehicles: by(DS.vehicles), access_items: by(DS.access), breaches: by(DS.breaches), disputes: [], applications: DS.applications.filter((a) => a.unit_id === u.id) };
+  };
+  listUnits = async () => DS.units;
+  createUnit = async (_b, unit_number, lot_number, parking_spaces) => { DS.units.push({ id: id(), unit_number, lot_number, parking_spaces: Number(parking_spaces) || 0 }); };
+  addUnitPerson = async (_b, unitId, row) => { DS.people.push({ id: id(), unit_id: unitId, is_current: true, ...row }); };
+  addUnitPet = async (_b, unitId, row) => { DS.pets.push({ id: id(), unit_id: unitId, ...row }); };
+  addUnitVehicle = async (_b, unitId, row) => { DS.vehicles.push({ id: id(), unit_id: unitId, ...row }); };
+  addAccessItem = async (_b, unitId, row) => { DS.access.push({ id: id(), unit_id: unitId, ...row }); };
+  updateAccessItemStatus = async (iid, status) => { const x = DS.access.find((a) => a.id === iid); if (x) x.status = status; };
+  acknowledgeAccessItem = async () => ({ ok: true });
+  addUnitBreach = async (_b, unitId, row) => { DS.breaches.push({ id: id(), unit_id: unitId, status: "open", ...row }); };
+  updateUnitAgent = async (_b, unitId, agent) => { const u = DS.units.find((x) => x.id === unitId); if (u) { u.agent_business = agent.business; u.agent_contact = agent.contact; u.agent_phone = agent.phone; u.agent_email = agent.email; u.agent_note = agent.note; } };
+  // Correspondence Hub — demo stubs (no live email in the demo)
+  listCorrThreads = async () => [];
+  getCorrThread = async () => ({ thread: null, messages: [] });
+  listCorrContacts = async () => [];
+  saveCorrContact = async () => "demo-contact";
+  sendCorrespondence = async () => ({ ok: true, threadId: "demo-thread", messageId: "demo-msg", deliveryStatus: "sent", demo: true });
+  updateCorrThread = async () => {};
+  setCorrThreadMembers = async () => {};
+  corrAttachmentUrl = async () => "";
+  listApplications = async () => [...DS.applications].sort((a, b) => (a.submitted_at < b.submitted_at ? 1 : -1));
+  createApplication = async (_b, _uid, unitId, kind, category, title, details) => {
+    const aid = id();
+    DS.applications.unshift({ id: aid, unit_id: unitId, kind, category, title, details, status: "submitted", submitted_by: DEMO_UID, submitted_at: now() });
+    if (kind === "application" && ["pet", "lot_improvement", "keys_access", "other"].includes(category)) {
+      DS.motions.unshift({ id: id(), title: "Approve: " + (title || category), description: details.description || "", context_type: "application", context_id: aid, details: { category, unit: details.unit, conditions: ["Approval is subject to compliance with the scheme's by-laws.", "The committee may attach further reasonable conditions before final sign-off."] }, eligible_count: 6, threshold: 4, status: "open", opened_by: DEMO_UID, opened_at: now() });
+      DS.notifications.unshift({ id: id(), kind: "motion_opened", ref_table: "motions", ref_id: aid, title: "Vote required: Approve: " + (title || category), body: "Majority needed: 4 of 6 BCC members.", read_at: null, created_at: now() });
+    } else {
+      DS.notifications.unshift({ id: id(), kind: "application_submitted", ref_table: "applications", ref_id: aid, title: (kind === "booking" ? "Booking" : "Application") + " awaiting review", body: (title || category) + " requires a decision", read_at: null, created_at: now() });
+    }
+    return aid;
+  };
+  decideApplication = async (_b, aid, approve, note) => {
+    const a = DS.applications.find((x) => x.id === aid);
+    if (a) { a.status = approve ? "approved" : "declined"; a.decided_at = now(); a.decision_note = note || null;
+      if (approve && a.category === "parking_permit") DS.permits.unshift({ id: id(), application_id: aid, permit_no: "PP-" + String(DS.permits.length + 8).padStart(4, "0"), unit_number: a.details.unit, vehicle_make: a.details.vehicle_make, vehicle_model: a.details.vehicle_model, vehicle_colour: a.details.vehicle_colour, vehicle_rego: a.details.vehicle_rego, date_from: a.details.date_from, date_to: a.details.date_to, approval_date: now().slice(0, 10), status: "active" });
+    }
+  };
+  withdrawApplication = async (_b, aid) => { const a = DS.applications.find((x) => x.id === aid); if (a) a.status = "withdrawn"; };
+  listApplicationAttachments = async (ids) => DS.appAtts.filter((a) => ids.includes(a.application_id));
+  addApplicationAttachment = async (aid, up) => { DS.appAtts.push({ id: id(), application_id: aid, file_name: up.name, file_kind: up.kind, storage_path: up.path }); };
+  uploadMedia = async (_b, _area, file) => { const path = "demo/" + id(); files[path] = URL.createObjectURL(file); return { name: file.name, path, kind: /^image\//.test(file.type) ? "image" : /^video\//.test(file.type) ? "video" : "document" }; };
+  mediaUrl = async (path) => files[path] || "about:blank";
+  mediaBlob = async (path) => (await fetch(files[path])).blob();
+  listPermits = async () => DS.permits;
+  openPermitPdf = async () => { window.alert("In the live app this opens the pre-filled fold-for-dash permit PDF."); };
+  openProxyFormPdf = async () => { window.alert("In the live app this opens the signable proxy appointment form PDF."); };
+  listMotions = async () => [...DS.motions];
+  listMotionVotes = async () => [...DS.votes];
+  listMotionComments = async () => [...DS.mcomments];
+  addMotionComment = async (mid, body, authorName) => { DS.mcomments.push({ id: id(), motion_id: mid, body, author_name: authorName, created_at: now() }); };
+  updateMotionConditions = async (mid, conditions) => { const m = DS.motions.find((x) => x.id === mid); if (m) m.details = { ...(m.details || {}), conditions }; };
+  createMotion = async (_b, _u, m) => { const mid = id(); DS.motions.unshift({ id: mid, eligible_count: 6, threshold: 4, status: "open", opened_at: now(), opened_by: DEMO_UID, outcome_note: null, ...m }); return mid; };
+  castVote = async (mid, uid, vote, comment, proxy) => {
+    DS.votes.push({ id: id(), motion_id: mid, voter_user_id: uid || DEMO_UID, vote, comment: comment || null, proxy_for_user_id: proxy ? proxy.principal_user_id : null, proxy_appointment_id: proxy ? proxy.id : null, created_at: now() });
+    const m = DS.motions.find((x) => x.id === mid);
+    if (m && m.status === "open") {
+      const vs = DS.votes.filter((v) => v.motion_id === mid);
+      const yes = vs.filter((v) => v.vote === "yes").length, no = vs.filter((v) => v.vote === "no").length;
+      if (yes >= m.threshold) { m.status = "passed"; m.decided_at = now(); m.outcome_note = `${yes} yes / ${no} no / ${vs.length - yes - no} abstained of ${m.eligible_count} members`;
+        if (m.context_type === "application") decideApplication(null, m.context_id, true, "Decided by BCC vote: " + m.outcome_note + (m.details && m.details.conditions ? " — approval subject to the attached conditions" : ""));
+        if (m.context_type === "application") { const a = DS.applications.find((x) => x.id === m.context_id); if (a && m.details && m.details.conditions) a.details = { ...a.details, conditions: m.details.conditions }; }
+      } else if (yes + (m.eligible_count - vs.length) < m.threshold) { m.status = "failed"; m.decided_at = now(); m.outcome_note = `${yes} yes / ${no} no of ${m.eligible_count} members — majority not achievable`; if (m.context_type === "application") decideApplication(null, m.context_id, false, "Decided by BCC vote: " + m.outcome_note); }
+    }
+  };
+  withdrawMotion = async (mid) => { const m = DS.motions.find((x) => x.id === mid); if (m) { m.status = "withdrawn"; m.decided_at = now(); } };
+  listProxies = async () => [...DS.proxies];
+  createProxy = async (_b, p) => { DS.proxies.unshift({ id: id(), status: "active", created_at: now(), ...p }); };
+  revokeProxy = async (_b, pid) => { const p = DS.proxies.find((x) => x.id === pid); if (p) p.status = "revoked"; };
+  listMaintActivity = async (_b, mid) => { if (!DS.mact[mid]) DS.mact[mid] = seedTrail(mid); return [...DS.mact[mid]]; };
+  addMaintActivity = async (_b, mid, kind, body, extra) => { if (!DS.mact[mid]) DS.mact[mid] = seedTrail(mid); DS.mact[mid].push({ id: id(), maintenance_id: mid, kind, body, data: extra || {}, created_at: now() }); };
+  listMaintQuotes = async (_b, mid) => { if (!DS.quotes[mid]) DS.quotes[mid] = seedQuotes(mid); return [...DS.quotes[mid]]; };
+  addMaintQuote = async (_b, mid, q) => { if (!DS.quotes[mid]) DS.quotes[mid] = seedQuotes(mid); DS.quotes[mid].push({ id: id(), maintenance_id: mid, status: "received", created_at: now(), ...q }); };
+  setQuoteStatus = async (qid, status) => { Object.values(DS.quotes).forEach((arr) => { const q = arr.find((x) => x.id === qid); if (q) q.status = status; }); };
+  listContracts = async () => [...DS.contracts];
+  saveContract = async (_b, c) => { if (c.id) { const x = DS.contracts.find((y) => y.id === c.id); Object.assign(x, c); } else DS.contracts.push({ id: id(), status: "active", ...c }); };
+  deleteContract = async (_b, cid) => { DS.contracts = DS.contracts.filter((c) => c.id !== cid); };
+  listContractors = async () => [...DS.contractors];
+  saveContractor = async (_b, c) => { if (c.id) { const x = DS.contractors.find((y) => y.id === c.id); Object.assign(x, c); } else DS.contractors.push({ id: id(), status: "approved", ...c }); };
+  deleteContractor = async (_b, cid) => { DS.contractors = DS.contractors.filter((c) => c.id !== cid); };
+  listWalkItems = async () => [...DS.walkItems];
+  seedWalkDefaults = async () => {
+    if (DS.walkItems.length) return 0;
+    const rows = [["Fire Safety", "Fire exits clear and doors close/latch properly"], ["Fire Safety", "Extinguishers & hose reels in place, tags current"], ["Fire Safety", "Exit & emergency lighting working"], ["Access & Security", "Entry doors, intercom and fob readers working"], ["Access & Security", "Garage/gate doors operating and closing fully"], ["Access & Security", "CCTV cameras operational"], ["Lifts", "Lift operating normally, no unusual noise"], ["Common Areas", "Lobby, corridors & stairwells clean and lit"], ["Common Areas", "Bin rooms clean, no pests"], ["Common Areas", "Trip hazards: paths, mats, handrails secure"], ["Amenities", "Pool area: water clarity, gates self-close"], ["Building Fabric", "Balustrades and railings secure"], ["Building Fabric", "Signs of water leaks, damp or mould"], ["Services", "Common area lighting: globes out, sensors working"], ["Grounds", "Gardens, irrigation and drainage condition"]];
+    rows.forEach(([area, item], i) => DS.walkItems.push({ id: id(), area, item, sort: i * 10, active: true }));
+    return rows.length;
+  };
+  addWalkItem = async (_b, area, item) => { DS.walkItems.push({ id: id(), area, item, sort: 999, active: true }); };
+  removeWalkItem = async (_b, iid) => { DS.walkItems = DS.walkItems.filter((i) => i.id !== iid); };
+  listWalks = async () => [...DS.walks];
+  createWalk = async (_b, attendees) => { const wid = id(); DS.walks.unshift({ id: wid, walk_date: now().slice(0, 10), attendees, status: "in_progress", summary: null }); DS.walkResults[wid] = []; return wid; };
+  listWalkResults = async (wid) => [...(DS.walkResults[wid] || [])];
+  setWalkResult = async (wid, iid, result, note) => setWalkResultPhoto(wid, iid, result, note, null);
+  setWalkResultPhoto = async (wid, iid, result, note, photoPath) => {
+    const arr = DS.walkResults[wid] = DS.walkResults[wid] || [];
+    const ex = arr.find((r) => r.item_id === iid);
+    if (ex) { if (result) ex.result = result; if (note !== undefined) ex.note = note; if (photoPath) ex.photo_path = photoPath; }
+    else arr.push({ id: id(), walkthrough_id: wid, item_id: iid, result, note, photo_path: photoPath });
+  };
+  setWalkResultMaint = async (wid, iid, maintId) => {
+    const arr = DS.walkResults[wid] = DS.walkResults[wid] || [];
+    const ex = arr.find((r) => r.item_id === iid);
+    if (ex) ex.maintenance_id = maintId; else arr.push({ id: id(), walkthrough_id: wid, item_id: iid, maintenance_id: maintId });
+  };
+  completeWalk = async (_b, wid, summary) => { const w = DS.walks.find((x) => x.id === wid); if (w) { w.status = "completed"; w.summary = summary; } };
+  listNotifications = async () => [...DS.notifications];
+  markNotificationRead = async (nid) => { const n = DS.notifications.find((x) => x.id === nid); if (n) n.read_at = now(); };
+  markAllNotificationsRead = async () => { DS.notifications.forEach((n) => { if (!n.read_at) n.read_at = now(); }); };
+  loadMyBuildingBilling = async () => ({ status: "trial", trial_end: dAhead(21), payment_method_label: null, preferred_payment_day: 15, admin_monthly: 12, per_unit_monthly: 2.75, unit_count: 40, gst_rate: 10, gst_mode: "plus" });
+  startPaymentSetup = async () => { window.alert("In the live app this opens Stripe to save a card or BECS direct debit for automatic payment."); };
+  createAdhocInvoice = async () => { window.alert("Demo: one-off invoices are raised in the live Admin console."); };
+  stripeRefund = async () => { window.alert("Demo: refunds are processed in the live Admin console."); };
+  loadBillingSummary = async () => ([{ building_name: "SeaHaven", month: "07/2026", invoices: 2, billed: 147.43, paid: 134.20, outstanding: 13.23, refunded: 0 }]);
+  exportBuildingData = async (_b, buildingName) => {
+    const sheets = [
+      ["About This Export", [{ field: "Building", value: buildingName }, { field: "Exported", value: now() }, { field: "Note", value: "Demo export — in the live app this includes every register, record and stored file for your building." }]],
+      ["Units", DS.units], ["Unit People", DS.people], ["Unit Pets", DS.pets], ["Unit Vehicles", DS.vehicles],
+      ["Keys & Fobs", DS.access], ["Breaches", DS.breaches], ["Applications", DS.applications], ["Parking Permits", DS.permits],
+      ["Motions", DS.motions], ["Votes", DS.votes], ["Proxies", DS.proxies], ["Contracts", DS.contracts], ["Contractors", DS.contractors],
+      ["Walkthroughs", DS.walks], ["Alerts", DS.notifications],
+    ];
+    downloadWorkbook(`nalohub-export-demo-${now().slice(0, 10)}.xls`, sheets);
+    return { sheets: sheets.length, files: 0 };
+  };
 }

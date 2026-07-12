@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { T } from "../theme.js";
 import { Btn, Field, Input, Select, Badge, Textarea } from "./ui.jsx";
-import { loadTiers, updateTier, loadBuildingBilling, saveBuildingBilling, loadInvoices, createInvoice, setInvoiceStatus, loadPlatformSettings, savePlatformSettings } from "../db.js";
+import { loadTiers, updateTier, loadBuildingBilling, saveBuildingBilling, loadInvoices, createInvoice, setInvoiceStatus, loadPlatformSettings, savePlatformSettings, createAdhocInvoice, stripeRefund, listMembers } from "../db.js";
 import { computeBilling, money, iso } from "../billing.js";
 import { downloadInvoicePdf } from "../invoicePdf.js";
 
@@ -15,7 +15,10 @@ const defaults = (tiers) => ({
   service_start: todayISO(), first_billing_date: null,
   payment_terms_days: 14, gst_mode: "plus", gst_rate: 10, currency: "AUD",
   reminder_days: 3, overdue_days: 7, status: "trial", notes: "",
+  admin_monthly: 12.00, per_unit_monthly: 2.75, unit_count: 0, preferred_payment_day: 1,
+  trial_days: null, trial_end: null, late_fee_amount: 0, suspend_on_expiry: true,
 });
+const au = (v) => { if (!v) return "—"; const d = String(v).slice(0, 10).split("-"); return d.length === 3 ? `${d[2]}/${d[1]}/${d[0]}` : String(v); };
 const STATUS_COLOR = { draft: "#9fb2c8", sent: "#38bdf8", paid: "#34d399", overdue: "#f87171", void: "#6b7280" };
 
 export default function BillingPanel({ bid, building }) {
@@ -24,6 +27,7 @@ export default function BillingPanel({ bid, building }) {
   const [invoices, setInvoices] = useState([]);
   const [settings, setSettings] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [chair, setChair] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
@@ -37,6 +41,7 @@ export default function BillingPanel({ bid, building }) {
       setCfg(existing ? { ...defaults(ts), ...existing } : defaults(ts));
       setInvoices(await loadInvoices(bid));
       setSettings(await loadPlatformSettings());
+      try { const mems = await listMembers(bid); setChair(mems.find((m) => m.role === "bcc" && m.status === "active") || mems.find((m) => m.role === "admin" && m.status === "active") || null); } catch (e) {}
     } catch (e) { setErr(e.message || String(e)); }
     setLoading(false);
   };
@@ -71,7 +76,7 @@ export default function BillingPanel({ bid, building }) {
   };
   const mark = async (id, status) => { try { await setInvoiceStatus(id, status); setInvoices(await loadInvoices(bid)); } catch (e) { setErr(e.message); } };
   const saveSettings = async () => { try { await savePlatformSettings(settings || {}); setMsg("Business details saved."); setTimeout(() => setMsg(""), 1800); } catch (e) { setErr(e.message); } };
-  const billTo = () => ({ name: (building && building.name) || "Building", address: (building && building.address) || "" });
+  const billTo = () => ({ name: (building && building.name) || "Building", address: (building && building.address) || "", contact: chair ? chair.full_name : "", email: (chair && chair.email) || "" });
   const pdfStored = (v) => downloadInvoicePdf(v, (v.meta && v.meta.issuer) || settings || {}, (v.meta && v.meta.billTo) || billTo());
   const pdfPreview = (inv) => downloadInvoicePdf({ number: "PREVIEW", period_start: iso(inv.periodStart), period_end: iso(inv.periodEnd), issue_date: iso(inv.issueDate), due_date: iso(inv.dueDate), lines: inv.lines, subtotal: inv.subtotal, gst: inv.gst, total: inv.total, currency: cfg.currency }, settings || {}, billTo());
 
@@ -89,7 +94,7 @@ export default function BillingPanel({ bid, building }) {
         </div>
       </div>
       <div style={{ color: T.textMuted, fontSize: 12, marginBottom: 8 }}>
-        {iso(inv.periodStart)} → {iso(inv.periodEnd)} · due {iso(inv.dueDate)}
+        {au(iso(inv.periodStart))} → {au(iso(inv.periodEnd))} · due {au(iso(inv.dueDate))}
       </div>
       {inv.lines.map((l, i) => (
         <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0", borderBottom: `1px dashed ${T.border}` }}>
@@ -107,6 +112,33 @@ export default function BillingPanel({ bid, building }) {
     <div style={sect}>
       {err && <div style={{ color: "#f87171", fontSize: 13, marginBottom: 8 }}>{err}</div>}
       {msg && <div style={{ color: "#34d399", fontSize: 13, marginBottom: 8 }}>{msg}</div>}
+
+      {/* automated billing engine (Stripe) */}
+      <div style={head}>Automated billing — invoices generate & charge themselves daily at 6am</div>
+      <div style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
+          <Field label="Admin $/month (exc GST)"><Input type="number" step="0.01" value={cfg.admin_monthly ?? 12} onChange={(e) => set("admin_monthly", Number(e.target.value))} /></Field>
+          <Field label="Per lot $/month (exc GST)"><Input type="number" step="0.01" value={cfg.per_unit_monthly ?? 2.75} onChange={(e) => set("per_unit_monthly", Number(e.target.value))} /></Field>
+          <Field label="Total lots (billed on all)"><Input type="number" value={cfg.unit_count ?? 0} onChange={(e) => set("unit_count", Number(e.target.value))} /></Field>
+          <Field label="Preferred payment day (1–28)"><Input type="number" min="1" max="28" value={cfg.preferred_payment_day ?? 1} onChange={(e) => set("preferred_payment_day", Number(e.target.value))} /></Field>
+          <Field label="Trial — days (or set a date →)"><Input type="number" value={cfg.trial_days ?? ""} onChange={(e) => set("trial_days", e.target.value ? Number(e.target.value) : null)} /></Field>
+          <Field label="Trial ends on"><Input type="date" value={cfg.trial_end || ""} onChange={(e) => set("trial_end", e.target.value || null)} /></Field>
+          <Field label="Late payment fee $ (0 = off)"><Input type="number" step="0.01" value={cfg.late_fee_amount ?? 0} onChange={(e) => set("late_fee_amount", Number(e.target.value))} /></Field>
+          <Field label="Payment method"><div style={{ fontSize: 13, paddingTop: 8, color: cfg.payment_method_label ? "#34d399" : "#f59e0b" }}>{cfg.payment_method_label || "Not saved — building sets up in Billing"}</div></Field>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.textMuted, marginTop: 8 }}>
+          <input type="checkbox" checked={cfg.suspend_on_expiry !== false} onChange={(e) => set("suspend_on_expiry", e.target.checked)} />
+          Suspend access if the trial ends without a payment method (reminders go to the BCC at 14, 7 and 2 days)
+        </label>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>
+          Monthly value: {money((Number(cfg.admin_monthly) || 0) + (Number(cfg.per_unit_monthly) || 0) * (Number(cfg.unit_count) || 0), cfg.currency)} + GST · first bill pro-rata from trial end to the preferred payment day.
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <Btn onClick={save}>Save billing setup</Btn>
+          <Btn kind="ghost" onClick={async () => { const d = prompt("One-off item description (e.g. Feature customisation):"); if (!d) return; const a = prompt("Amount $ (exc GST):"); if (!a) return; try { await createAdhocInvoice(bid, "one_off", d, Number(a)); setInvoices(await loadInvoices(bid)); setMsg("One-off invoice raised."); } catch (e) { setErr(String(e.message || e)); } }}>+ One-off invoice</Btn>
+          <Btn kind="ghost" onClick={async () => { const d = prompt("Refund description:"); if (!d) return; const a = prompt("Refund amount $:"); if (!a) return; const orig = prompt("Refund against which paid invoice? (paste invoice id, or leave blank to record only)") || ""; try { if (orig) await stripeRefund(orig, Number(a), d); else await createAdhocInvoice(bid, "refund", d, Number(a)); setInvoices(await loadInvoices(bid)); setMsg("Refund recorded."); } catch (e) { setErr(String(e.message || e)); } }}>− Refund</Btn>
+        </div>
+      </div>
 
       {/* business + payment details */}
       <div style={head}>Business &amp; payment details (shown on every invoice)</div>

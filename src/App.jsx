@@ -109,7 +109,10 @@ export default function App() {
     backend: true, signOut, platformAdmin, exitToConsole,
     billing: {
       list: () => loadInvoices(buildingId),
-      download: (inv) => downloadInvoicePdf(inv, (inv.meta && inv.meta.issuer) || issuer || {}, (inv.meta && inv.meta.billTo) || { name: building.name, address: building.address }),
+      download: (inv) => {
+        const chair = store.users.find((u2) => u2.buildingId === buildingId && u2.role === "bcc" && u2.status === "active") || store.users.find((u2) => u2.buildingId === buildingId && u2.role === "admin" && u2.status === "active");
+        downloadInvoicePdf(inv, (inv.meta && inv.meta.issuer) || issuer || {}, (inv.meta && inv.meta.billTo) || { name: building.name, address: building.address, contact: chair ? chair.name : "", email: (chair && chair.email) || building.bccEmail || "" });
+      },
     },
   };
 
