@@ -1072,6 +1072,47 @@ if (DEMO_MODE) {
     { id: id(), maintenance_id: mid, supplier_name: "GateWorks QLD", amount: 3100, status: "rejected", created_at: daysAgo(5) },
   ]);
 
+  // ---- Correspondence Hub demo dataset --------------------------------------
+  // Sample external correspondence so the demo mirrors the live feature. Sending
+  // and replies are simulated in-memory (no email leaves the browser).
+  const corrMB = "seahaven@send.nalohub.com";
+  const cStrata = { id: "cc-strata", name: "Jordan Lee", org: "Definitive Strata Management", email: "jordan.lee@definitivestrata.com.au", phone: "07 5333 1000", partyType: "strata_manager", party_type: "strata_manager", notes: "Our strata manager — levies, insurance and AGM paperwork." };
+  const cIns = { id: "cc-ins", name: "CoastCover Claims", org: "CoastCover Insurance", email: "claims@coastcover.com.au", phone: "1300 720 720", partyType: "insurer", party_type: "insurer", notes: "Building insurer — policy 88-CC-40192." };
+  const cElec = { id: "cc-elec", name: "Sam Sparks", org: "Bright Spark Electrical", email: "sam@brightspark.com.au", phone: "0400 111 222", partyType: "contractor", party_type: "contractor", notes: "Preferred electrician." };
+  const cCouncil = { id: "cc-council", name: "Development Compliance", org: "Sunshine Coast Council", email: "mail@sunshinecoast.qld.gov.au", phone: "07 5475 7272", partyType: "council", party_type: "council", notes: null };
+  const cLegal = { id: "cc-legal", name: "Amelia Ward", org: "Harbour Legal", email: "award@harbourlegal.com.au", phone: "07 5000 2020", partyType: "solicitor", party_type: "solicitor", notes: "Engaged re: Lot 5 water ingress." };
+  const om = (o) => ({ direction: "outbound", fromName: null, fromEmail: corrMB, cc: null, bodyHtml: null, deliveryStatus: "delivered", deletedAt: null, attachments: [], ...o });
+  const im = (c, o) => ({ direction: "inbound", fromName: c.name, fromEmail: c.email, toEmail: corrMB, cc: null, bodyHtml: null, deliveryStatus: null, deletedAt: null, attachments: [], ...o });
+  DS.corr = {
+    contacts: [cStrata, cIns, cElec, cCouncil, cLegal],
+    threads: [
+      { id: "ct-tree", buildingId: "b-demo", subject: "Overhanging tree — boundary with 14 Marine Pde", status: "awaiting_reply", visibility: "committee", contextType: "compliance", contextId: null, createdBy: DEMO_UID, createdAt: daysAgo(6), lastActivityAt: daysAgo(1), contact: cCouncil, messages: [
+        im(cCouncil, { id: id(), subject: "Overhanging tree — boundary with 14 Marine Pde", bodyText: "Good morning,\n\nWe have received a request regarding vegetation on the common boundary. Please arrange an inspection and advise your intended action within 28 days.\n\nDevelopment Compliance\nSunshine Coast Council", createdAt: daysAgo(6) }),
+        om({ id: id(), toEmail: cCouncil.email, subject: "Overhanging tree — boundary with 14 Marine Pde", bodyText: "Hello,\n\nThank you for the notice. The committee has engaged an arborist and works are booked for the week of the 20th. We will confirm once complete.\n\nSeaHaven Committee via NaloHub", createdAt: daysAgo(1) }),
+      ] },
+      { id: "ct-ins", buildingId: "b-demo", subject: "Certificate of currency — 2026/27 renewal", status: "open", visibility: "committee", contextType: "compliance", contextId: null, createdBy: DEMO_UID, createdAt: daysAgo(9), lastActivityAt: daysAgo(2), contact: cIns, messages: [
+        om({ id: id(), toEmail: cIns.email, subject: "Certificate of currency — 2026/27 renewal", bodyText: "Hi,\n\nCould you please send the current certificate of currency for SeaHaven? Our lender has requested it for the annual review.\n\nThanks,\nSeaHaven Committee via NaloHub", createdAt: daysAgo(4) }),
+        im(cIns, { id: id(), subject: "Certificate of currency — 2026/27 renewal", bodyText: "Hi team,\n\nCertificate of currency attached for the 2026/27 period. Let us know if you need anything further.\n\nCoastCover Claims", createdAt: daysAgo(2), attachments: [{ id: id(), fileName: "Certificate-of-Currency-2026-27.pdf", mime: "application/pdf", storagePath: "demo/corr/coc", size: 184320 }] }),
+      ] },
+      { id: "ct-lift", buildingId: "b-demo", subject: "Lift maintenance agreement — renewal terms", status: "open", visibility: "committee", contextType: "contract", contextId: null, createdBy: DEMO_UID, createdAt: daysAgo(12), lastActivityAt: daysAgo(5), contact: cStrata, messages: [
+        om({ id: id(), toEmail: cStrata.email, subject: "Lift maintenance agreement — renewal terms", bodyText: "Hi Jordan,\n\nThe Sunshine Lifts agreement is up for renewal in a couple of months. Could you confirm the proposed term and annual figure so the committee can review before the next meeting?\n\nThanks,\nSeaHaven Committee via NaloHub", createdAt: daysAgo(6) }),
+        im(cStrata, { id: id(), subject: "Lift maintenance agreement — renewal terms", bodyText: "Hi,\n\nProposed renewal is a 36-month term at $8,400 p.a. (CPI adjusted annually), same scope as current. I can circulate the draft for signing once the committee is comfortable.\n\nRegards,\nJordan Lee\nDefinitive Strata Management", createdAt: daysAgo(5) }),
+      ] },
+      { id: "ct-gate", buildingId: "b-demo", subject: "Car park gate motor — accept quote & schedule", status: "closed", visibility: "committee", contextType: "maintenance", contextId: "m-demo", createdBy: DEMO_UID, createdAt: daysAgo(5), lastActivityAt: daysAgo(4), contact: cElec, messages: [
+        om({ id: id(), toEmail: cElec.email, subject: "Car park gate motor — accept quote & schedule", bodyText: "Hi Sam,\n\nThe committee has approved your quote of $2,350 for the car park gate motor. Please go ahead and let us know your earliest install date.\n\nThanks,\nSeaHaven Committee via NaloHub", createdAt: daysAgo(5) }),
+        im(cElec, { id: id(), subject: "Car park gate motor — accept quote & schedule", bodyText: "No worries — booked in for Thursday morning. I will need the garage on hold-open for about two hours; I will message the building manager on arrival.\n\nCheers,\nSam\nBright Spark Electrical", createdAt: daysAgo(4) }),
+      ] },
+      { id: "ct-legal", buildingId: "b-demo", subject: "Lot 5 water ingress — legal position", status: "open", visibility: "restricted", contextType: "dispute", contextId: null, createdBy: DEMO_UID, createdAt: daysAgo(8), lastActivityAt: daysAgo(6), contact: cLegal, messages: [
+        om({ id: id(), toEmail: cLegal.email, subject: "Lot 5 water ingress — legal position", bodyText: "Dear Amelia,\n\nFollowing the water ingress affecting Lot 5, could you advise the committee on the owners corporation position and next steps? Reports are being compiled and can be forwarded.\n\nIn confidence,\nSeaHaven Committee via NaloHub", createdAt: daysAgo(7) }),
+        im(cLegal, { id: id(), subject: "Lot 5 water ingress — legal position", bodyText: "Thank you. On the information provided this appears to be common property. Please preserve all records and avoid admissions of liability while I review. I will provide a short advice this week.\n\nAmelia Ward\nHarbour Legal", createdAt: daysAgo(6) }),
+      ] },
+    ],
+    unfiled: [
+      { id: "cu-1", fromName: "Priya Sharma", fromEmail: "priya.personal@gmail.com", subject: "Fwd: Certificate of currency — 2026/27 renewal", receivedAt: daysAgo(1), body: "Forwarding the insurer reply for the record.\n\nPriya" },
+      { id: "cu-2", fromName: "GateWorks QLD", fromEmail: "info@gateworksqld.com.au", subject: "Quote follow-up — gate motor", receivedAt: daysAgo(3), body: "Just following up on our quote for the gate motor — happy to match a competitor." },
+    ],
+  };
+
   // ---- re-bind the new-feature API to the demo dataset ----
   unitHealthCheck = async (_b, unitNo) => {
     const q = String(unitNo || "").trim().toLowerCase();
@@ -1090,17 +1131,31 @@ if (DEMO_MODE) {
   acknowledgeAccessItem = async () => ({ ok: true });
   addUnitBreach = async (_b, unitId, row) => { DS.breaches.push({ id: id(), unit_id: unitId, status: "open", ...row }); };
   updateUnitAgent = async (_b, unitId, agent) => { const u = DS.units.find((x) => x.id === unitId); if (u) { u.agent_business = agent.business; u.agent_contact = agent.contact; u.agent_phone = agent.phone; u.agent_email = agent.email; u.agent_note = agent.note; } };
-  // Correspondence Hub — demo stubs (no live email in the demo)
-  listCorrThreads = async () => [];
-  getCorrThread = async () => ({ thread: null, messages: [] });
-  listCorrContacts = async () => [];
-  saveCorrContact = async () => "demo-contact";
-  sendCorrespondence = async () => ({ ok: true, threadId: "demo-thread", messageId: "demo-msg", deliveryStatus: "sent", demo: true });
-  updateCorrThread = async () => {};
+  // Correspondence Hub — demo dataset (sample threads; sending & replies simulated, no real email)
+  listCorrThreads = async () => [...DS.corr.threads].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1)).map((t) => ({ id: t.id, subject: t.subject, status: t.status, visibility: t.visibility, contextType: t.contextType, contextId: t.contextId, lastActivityAt: t.lastActivityAt, createdAt: t.createdAt, contact: t.contact ? { name: t.contact.name, email: t.contact.email, org: t.contact.org, partyType: t.contact.partyType } : null }));
+  getCorrThread = async (tid) => { const t = DS.corr.threads.find((x) => x.id === tid); if (!t) return { thread: null, messages: [] }; return { thread: { id: t.id, buildingId: t.buildingId, subject: t.subject, status: t.status, visibility: t.visibility, contextType: t.contextType, contextId: t.contextId, createdBy: t.createdBy, createdAt: t.createdAt, lastActivityAt: t.lastActivityAt, contact: t.contact }, messages: [...t.messages].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)) }; };
+  listCorrContacts = async () => [...DS.corr.contacts].sort((a, b) => a.name.localeCompare(b.name)).map((c) => ({ id: c.id, name: c.name, org: c.org, email: c.email, phone: c.phone, partyType: c.partyType, notes: c.notes || "" }));
+  saveCorrContact = async (_b, c) => { if (c && c.id) { const x = DS.corr.contacts.find((y) => y.id === c.id); if (x) Object.assign(x, { name: c.name, org: c.org, email: c.email, phone: c.phone, partyType: c.partyType, party_type: c.partyType, notes: c.notes }); return c.id; } const nc = { id: id(), name: c.name, org: c.org || "", email: c.email || "", phone: c.phone || "", partyType: c.partyType || "other", party_type: c.partyType || "other", notes: c.notes || "" }; DS.corr.contacts.push(nc); return nc.id; };
+  sendCorrespondence = async (payload) => {
+    const p = payload || {};
+    let t = p.threadId ? DS.corr.threads.find((x) => x.id === p.threadId) : null;
+    if (!t) {
+      const pc = p.contact || {};
+      let contact = pc.id ? DS.corr.contacts.find((x) => x.id === pc.id) : null;
+      if (!contact) { contact = { id: id(), name: pc.name || pc.email || "New recipient", org: pc.org || "", email: pc.email || "", phone: "", partyType: pc.party_type || "other", party_type: pc.party_type || "other", notes: "" }; if (pc.name || pc.email) DS.corr.contacts.push(contact); }
+      t = { id: id(), buildingId: "b-demo", subject: p.subject || "(no subject)", status: "awaiting_reply", visibility: p.visibility || "committee", contextType: p.contextType || "general", contextId: p.contextId || null, createdBy: DEMO_UID, createdAt: now(), lastActivityAt: now(), contact, messages: [] };
+      DS.corr.threads.unshift(t);
+    }
+    const msg = { id: id(), direction: "outbound", fromName: null, fromEmail: corrMB, toEmail: t.contact.email, cc: null, subject: p.subject || t.subject, bodyText: p.bodyText || "", bodyHtml: null, deliveryStatus: "delivered", deletedAt: null, createdAt: now(), attachments: (p.attachments || []).map((a) => ({ id: id(), fileName: a.filename, mime: a.mime, storagePath: "demo/corr/" + id(), size: a.contentBase64 ? Math.round(a.contentBase64.length * 0.75) : 0 })) };
+    t.messages.push(msg); t.lastActivityAt = now();
+    setTimeout(() => { t.messages.push({ id: id(), direction: "inbound", fromName: t.contact.name, fromEmail: t.contact.email, toEmail: corrMB, cc: null, subject: msg.subject, bodyText: "Thanks — got your email, I will follow up shortly.\n\n" + t.contact.name + (t.contact.org ? "\n" + t.contact.org : ""), bodyHtml: null, deliveryStatus: null, deletedAt: null, createdAt: now(), attachments: [] }); t.status = "open"; t.lastActivityAt = now(); }, 1800);
+    return { ok: true, threadId: t.id, messageId: msg.id, deliveryStatus: "sent", demo: true };
+  };
+  updateCorrThread = async (tid, patch) => { const t = DS.corr.threads.find((x) => x.id === tid); if (t && patch) { if (patch.status !== undefined) t.status = patch.status; if (patch.visibility !== undefined) t.visibility = patch.visibility; if (patch.subject !== undefined) t.subject = patch.subject; } };
   setCorrThreadMembers = async () => {};
   corrAttachmentUrl = async () => "";
-  listCorrUnfiled = async () => [];
-  fileCorrUnfiled = async () => "demo-msg";
+  listCorrUnfiled = async () => [...DS.corr.unfiled];
+  fileCorrUnfiled = async (rawId, tid) => { const i = DS.corr.unfiled.findIndex((u) => u.id === rawId); const u = i >= 0 ? DS.corr.unfiled[i] : null; if (i >= 0) DS.corr.unfiled.splice(i, 1); const t = DS.corr.threads.find((x) => x.id === tid); if (t && u) { t.messages.push({ id: id(), direction: "inbound", fromName: u.fromName, fromEmail: u.fromEmail, toEmail: corrMB, cc: null, subject: u.subject, bodyText: u.body || "(Filed from the Unfiled tray.)", bodyHtml: null, deliveryStatus: null, deletedAt: null, createdAt: now(), attachments: [] }); t.lastActivityAt = now(); } return "demo-msg"; };
   listApplications = async () => [...DS.applications].sort((a, b) => (a.submitted_at < b.submitted_at ? 1 : -1));
   createApplication = async (_b, _uid, unitId, kind, category, title, details) => {
     const aid = id();

@@ -1575,8 +1575,9 @@ function CorrespondenceView() {
   const blankCompose = () => ({ contactId: "", name: "", email: "", org: "", partyType: "other", subject: "", body: signature(), contextType: "general", contextId: "", visibility: "committee", memberIds: [] });
   const openCompose = () => { setCf(blankCompose()); setCFiles([]); setMode("compose"); };
 
-  const loadUnfiled = () => { if (!backend) return; listCorrUnfiled(buildingId).then(setUnfiled).catch(() => {}); };
-  const refresh = () => { if (!backend) return; listCorrThreads(buildingId).then(setThreads).catch((e) => flash(String(e.message || e))); listCorrContacts(buildingId).then(setContacts).catch(() => {}); loadUnfiled(); };
+  // In demo (no backend) the db.js stubs return sample data, so we load in both modes.
+  const loadUnfiled = () => { listCorrUnfiled(buildingId).then(setUnfiled).catch(() => {}); };
+  const refresh = () => { listCorrThreads(buildingId).then(setThreads).catch((e) => flash(String(e.message || e))); listCorrContacts(buildingId).then(setContacts).catch(() => {}); loadUnfiled(); };
   useEffect(() => { setMode("list"); setOpen(null); refresh(); }, [buildingId, backend]);
 
   const assignUnfiled = async (rawId, threadId) => {
@@ -1685,6 +1686,7 @@ function CorrespondenceView() {
       <Head title="Correspondence" sub="The building's paper trail with strata, insurers, solicitors & trades" action={<HeaderAction onClick={openCompose}><Plus size={15} /> New</HeaderAction>} />
       <Wrap>
         <HowTo id="correspondence" steps={["Compose a message to any external party — strata manager, insurer, solicitor, council, contractor. It sends by email from your building's address and every word is logged here.", "Replies thread back automatically: when they reply, it lands on the same conversation, so the whole exchange lives in one place.", "Mark threads restricted when only some committee members should see them, and close them when they're done. Nothing here can be edited or deleted — it's a permanent, tamper-evident record."]} sell="The correspondence that used to scatter across personal inboxes — now one shared, permanent record the whole committee can stand behind." />
+        {!backend && <div className="rounded-xl px-3.5 py-2.5 mb-3 text-xs" style={{ background: hexToRgba(SEMANTIC.warn, T.mode === "dark" ? 0.14 : 0.1), color: T.textMuted, border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.3)}` }}><b style={{ color: T.text }}>Demo mode — simulated.</b> These are sample threads. Sending and replies here are simulated — no real email goes out — and everything resets when you reload.</div>}
         <div className="flex flex-wrap gap-2 items-center">
           <Btn grad onClick={openCompose}><Plus size={15} /> New message</Btn>
           <Btn kind="ghost" onClick={() => setMode("contacts")}><Users size={15} /> Contacts</Btn>
@@ -1693,8 +1695,7 @@ function CorrespondenceView() {
           <Select value={fStatus} onChange={(e) => setFStatus(e.target.value)}><option value="">All statuses</option>{Object.keys(CORR_STATUS).map((k) => <option key={k} value={k}>{CORR_STATUS[k].label}</option>)}</Select>
           <Select value={fParty} onChange={(e) => setFParty(e.target.value)}><option value="">All parties</option>{Object.keys(CORR_PARTY).map((k) => <option key={k} value={k}>{CORR_PARTY[k]}</option>)}</Select>
         </div>
-        {!backend ? <Empty icon={Mail} title="Correspondence is a live-building feature" hint="Connect a real building to send and track correspondence." />
-          : shown.length === 0 ? (<div className="space-y-3"><Empty icon={Mail} title="No correspondence yet" hint="Send your first tracked email to an external party — it's logged here automatically." /><div className="text-center"><Btn grad onClick={openCompose}><Plus size={15} /> New correspondence</Btn></div></div>)
+        {shown.length === 0 ? (<div className="space-y-3"><Empty icon={Mail} title="No correspondence yet" hint="Send your first tracked email to an external party — it's logged here automatically." /><div className="text-center"><Btn grad onClick={openCompose}><Plus size={15} /> New correspondence</Btn></div></div>)
           : <Card style={{ padding: 8 }}>{shown.map((t) => (
             <button key={t.id} onClick={() => openThread(t.id)} className="w-full text-left px-3 py-3 rounded-xl" style={{ borderBottom: `1px dashed ${T.border}` }}>
               <div className="flex items-center gap-2">
@@ -1846,8 +1847,7 @@ function CorrespondenceView() {
     <div>
       <Head title="Unfiled" sub="Inbound email we couldn't match — file it to a thread" onBack={() => { setMode("list"); refresh(); }} backLabel="Correspondence" />
       <Wrap>
-        {!backend ? <Empty icon={Inbox} title="Unfiled is a live-building feature" hint="Connect a real building to receive correspondence." />
-          : unfiled.length === 0 ? <Empty icon={Inbox} title="Nothing unfiled" hint="Any reply we can't match automatically lands here so it's never lost. You're all clear." />
+        {unfiled.length === 0 ? <Empty icon={Inbox} title="Nothing unfiled" hint="Any reply we can't match automatically lands here so it's never lost. You're all clear." />
           : <Card style={{ padding: 8 }}>{unfiled.map((u) => (
             <div key={u.id} className="px-3 py-3" style={{ borderBottom: `1px dashed ${T.border}` }}>
               <div className="text-sm font-medium">{u.fromName || u.fromEmail || "Unknown sender"}{u.fromName && u.fromEmail ? <span style={{ color: T.textMuted }} className="font-normal"> · {u.fromEmail}</span> : null}</div>
