@@ -86,6 +86,10 @@ const HUE = {
 const ROLE_LABEL = { admin: "Platform admin", bcc: "Committee (BCC)", manager: "Building manager", strata: "Strata manager", owner: "Owner", tenant: "Tenant" };
 const isApprover = (r) => r === "bcc" || r === "manager" || r === "admin";
 const isCommittee = (r) => r === "bcc" || r === "admin";
+// Correspondence access — single source of truth. Flip CORR_ALLOW_BM to false to remove
+// the building manager from Correspondence (menu + screen), in both the app and the demo.
+const CORR_ALLOW_BM = true;
+const canSeeCorr = (u) => isCommittee(u.role) || (CORR_ALLOW_BM && u.role === "manager") || u.msc === true;
 const canMaint = (u) => u.role === "manager" || u.role === "bcc" || u.role === "admin" || u.msc === true;
 const isStrata = (r) => r === "strata";
 
@@ -689,7 +693,7 @@ const NAV = [
   { key: "meetings", label: "Meetings", icon: Gavel, group: "building", show: (r) => r !== "tenant" },
   { key: "keyfobs", label: "Key & Fob Register", icon: KeyRound, group: "building", show: (r) => isCommittee(r) },
   { key: "unitsearch", label: "Unit Search", icon: Search, group: "building", show: (r) => isCommittee(r) },
-  { key: "correspondence", label: "Correspondence", icon: Mail, group: "building", show: (r) => isCommittee(r) || r === "manager" },
+  { key: "correspondence", label: "Correspondence", icon: Mail, group: "building", show: (r) => isCommittee(r) || (CORR_ALLOW_BM && r === "manager") },
   { key: "contracts", label: "Contracts", icon: Briefcase, group: "building", show: (r) => isCommittee(r) },
   { key: "contractors", label: "Contractors", icon: HardHat, group: "building", show: (r) => isCommittee(r) || r === "manager" },
   { key: "walkthrough", label: "Walk-Through", icon: ClipboardList, group: "building", show: (r) => isCommittee(r) || r === "manager" },
@@ -1575,9 +1579,11 @@ function CorrespondenceView() {
   const blankCompose = () => ({ contactId: "", name: "", email: "", org: "", partyType: "other", subject: "", body: signature(), contextType: "general", contextId: "", visibility: "committee", memberIds: [] });
   const openCompose = () => { setCf(blankCompose()); setCFiles([]); setMode("compose"); };
 
-  // In demo (no backend) the db.js stubs return sample data, so we load in both modes.
-  const loadUnfiled = () => { listCorrUnfiled(buildingId).then(setUnfiled).catch(() => {}); };
-  const refresh = () => { listCorrThreads(buildingId).then(setThreads).catch((e) => flash(String(e.message || e))); listCorrContacts(buildingId).then(setContacts).catch(() => {}); loadUnfiled(); };
+  // Load in both backend and demo — but only for roles allowed to see correspondence
+  // (committee, building manager, MSC). This mirrors the app's RLS in the demo too.
+  const canView = canSeeCorr(user);
+  const loadUnfiled = () => { if (!canView) return; listCorrUnfiled(buildingId).then(setUnfiled).catch(() => {}); };
+  const refresh = () => { if (!canView) return; listCorrThreads(buildingId).then(setThreads).catch((e) => flash(String(e.message || e))); listCorrContacts(buildingId).then(setContacts).catch(() => {}); loadUnfiled(); };
   useEffect(() => { setMode("list"); setOpen(null); refresh(); }, [buildingId, backend]);
 
   const assignUnfiled = async (rawId, threadId) => {
@@ -1678,7 +1684,11 @@ function CorrespondenceView() {
         {onRemove && <button onClick={() => onRemove(i)} style={{ color: T.textMuted }}><X size={12} /></button>}
       </span>))}</div>) : null;
 
-  const shown = threads.filter((t) => (!fStatus || t.status === fStatus) && (!fParty || (t.contact && t.contact.partyType === fParty)));
+  // Restricted threads are visible only to the committee proper (BCC/admin), mirroring RLS —
+  // the building manager and MSC see committee threads but not restricted ones.
+  const roleThreads = threads.filter((t) => t.visibility !== "restricted" || isCommittee(user.role));
+  const shown = roleThreads.filter((t) => (!fStatus || t.status === fStatus) && (!fParty || (t.contact && t.contact.partyType === fParty)));
+  if (!canView) return null;
 
   // ---- list ----------------------------------------------------------------
   if (mode === "list") return (
@@ -1856,7 +1866,7 @@ function CorrespondenceView() {
               <div className="flex gap-2 mt-2 items-center">
                 <Select value={assignTo[u.id] || ""} onChange={(e) => setAssignTo({ ...assignTo, [u.id]: e.target.value })}>
                   <option value="">File to thread…</option>
-                  {threads.map((t) => <option key={t.id} value={t.id}>{(t.contact ? t.contact.name : "Unknown")}{t.subject ? ` — ${t.subject}` : ""}</option>)}
+                  {roleThreads.map((t) => <option key={t.id} value={t.id}>{(t.contact ? t.contact.name : "Unknown")}{t.subject ? ` — ${t.subject}` : ""}</option>)}
                 </Select>
                 <Btn grad disabled={!assignTo[u.id] || busy} onClick={() => assignUnfiled(u.id, assignTo[u.id])}><Check size={15} /> File</Btn>
               </div>
