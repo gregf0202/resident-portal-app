@@ -1537,6 +1537,7 @@ const CORR_STATUS = { open: { label: "Open", c: "#3b82f6" }, awaiting_reply: { l
 const CORR_MAX_ATTACH = 20 * 1024 * 1024; // 20 MB per file — larger files should be linked, not attached
 const corrDelivery = (s) => s === "sent" || s === "delivered" ? SEMANTIC.ok : s === "failed" ? SEMANTIC.bad : SEMANTIC.warn;
 const corrMB = (n) => `${(n / 1048576).toFixed(n > 1048576 ? 1 : 2)} MB`;
+const corrWhen = (iso) => { if (!iso) return ""; const d = new Date(String(iso).replace(" ", "T")); const day = fmtDate(String(iso).slice(0, 10)); return isNaN(d.getTime()) ? day : `${day} · ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`; };
 const fileToCorrAttachment = (file) => new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onload = () => { const s = String(r.result || ""); resolve({ filename: file.name, mime: file.type || "application/octet-stream", contentBase64: s.includes(",") ? s.slice(s.indexOf(",") + 1) : s, size: file.size }); };
@@ -1620,6 +1621,38 @@ function CorrespondenceView() {
   const changeStatus = async (s) => { try { await updateCorrThread(open.thread.id, { status: s }); await openThread(open.thread.id); refresh(); } catch (e) { flash(String(e.message || e)); } };
   const openAttachment = async (path) => { try { const url = await corrAttachmentUrl(path); if (url) window.open(url, "_blank"); } catch (e) { flash("Couldn't open the attachment — try again"); } };
 
+  // Print a clean, paper-friendly copy of the whole thread.
+  const printThread = () => {
+    if (!open) return;
+    const t = open.thread;
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const fromAddr = (open.messages.find((m) => m.direction === "outbound") || {}).fromEmail || "";
+    const rows = open.messages.map((m) => {
+      const who = m.direction === "outbound" ? senderIdentity : (m.fromName || m.fromEmail || "Received");
+      const isHtml = !m.bodyText && !!m.bodyHtml;
+      const body = m.deletedAt ? "[Message removed]" : (m.bodyText || m.bodyHtml || "(no body)");
+      const atts = (m.attachments || []).map((a) => `<div class="att">📎 ${esc(a.fileName)}</div>`).join("");
+      return `<div class="msg ${m.direction}"><div class="meta"><strong>${esc(who)}</strong> · ${esc(m.direction)} · ${esc(corrWhen(m.createdAt))}${m.deliveryStatus ? " · " + esc(m.deliveryStatus) : ""}</div><div class="body">${isHtml ? body : esc(body)}</div>${atts}</div>`;
+    }).join("");
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(t.subject || "Correspondence")}</title>
+      <style>body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,sans-serif;color:#111;max-width:720px;margin:24px auto;padding:0 16px;}
+      h1{font-size:18px;margin:0 0 6px;} .hdr{font-size:13px;color:#333;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:14px;}
+      .hdr div{margin:2px 0;} .msg{border:1px solid #ddd;border-radius:8px;padding:10px 12px;margin:10px 0;page-break-inside:avoid;}
+      .msg.outbound{background:#f4f8ff;} .meta{font-size:11px;color:#555;margin-bottom:6px;} .body{font-size:13px;white-space:pre-wrap;word-wrap:break-word;}
+      .att{font-size:11px;color:#555;margin-top:6px;} .foot{margin-top:18px;font-size:11px;color:#777;border-top:1px solid #ccc;padding-top:8px;}</style></head>
+      <body><h1>${esc(t.subject || "(no subject)")}</h1>
+      <div class="hdr"><div><strong>From:</strong> ${esc(senderIdentity)}${fromAddr ? ` &lt;${esc(fromAddr)}&gt;` : ""}</div>
+      <div><strong>To:</strong> ${esc(t.contact ? t.contact.name : "")}${t.contact && t.contact.email ? ` &lt;${esc(t.contact.email)}&gt;` : ""}</div>
+      <div><strong>Status:</strong> ${esc(CORR_STATUS[t.status]?.label || t.status)}${t.visibility === "restricted" ? " · Restricted" : ""}</div></div>
+      ${rows}
+      <div class="foot">${esc(building && building.name ? building.name : "")} · Correspondence record via NaloHub · printed ${esc(new Date().toLocaleString())}</div>
+      </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { flash("Allow pop-ups to print this thread"); return; }
+    w.document.write(html); w.document.close(); w.focus();
+    setTimeout(() => { try { w.print(); } catch (_e) {} }, 350);
+  };
+
   const saveContact = async () => {
     if (!ct.name.trim()) return flash("Add a name");
     try { await saveCorrContact(buildingId, { id: ct.id || undefined, name: ct.name.trim(), org: ct.org.trim(), email: ct.email.trim(), phone: ct.phone.trim(), partyType: ct.partyType, notes: ct.notes.trim() }); flash(ct.id ? "Contact updated" : "Contact added"); setCt({ id: "", name: "", org: "", email: "", phone: "", partyType: "other", notes: "" }); refresh(); }
@@ -1685,6 +1718,7 @@ function CorrespondenceView() {
             </div>
             <div className="flex items-center gap-2 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${T.border}` }}>
               {t.visibility === "restricted" && <Badge color={SEMANTIC.warn}><Lock size={10} /> Restricted</Badge>}
+              <Btn kind="ghost" onClick={printThread}><Printer size={14} /> Print</Btn>
               <div className="flex-1" />
               <span className="text-xs" style={{ color: T.textMuted }}>Status</span>
               <div style={{ width: 170 }}><Select value={t.status} onChange={(e) => changeStatus(e.target.value)}>{Object.keys(CORR_STATUS).map((k) => <option key={k} value={k}>{CORR_STATUS[k].label}</option>)}</Select></div>
@@ -1698,7 +1732,7 @@ function CorrespondenceView() {
                   <div className="max-w-[85%] rounded-2xl px-4 py-3" style={{ background: out ? hexToRgba(T.accent, T.mode === "dark" ? 0.16 : 0.10) : T.surfaceAlt, border: `1px solid ${out ? hexToRgba(T.accent, 0.35) : T.border}` }}>
                     <div className="text-xs mb-1 flex items-center gap-2 flex-wrap" style={{ color: T.textMuted }}>
                       <span className="font-semibold" style={{ color: T.text }}>{out ? "Sent" : (m.fromName || m.fromEmail || "Received")}</span>
-                      <span>· {fmtDate((m.createdAt || "").slice(0, 10))}</span>
+                      <span>· {corrWhen(m.createdAt)}</span>
                       {out && <Badge color={corrDelivery(m.deliveryStatus)}>{m.deliveryStatus}</Badge>}
                     </div>
                     {m.deletedAt ? <div className="text-sm italic" style={{ color: T.textMuted }}>Message removed</div>
