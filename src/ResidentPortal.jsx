@@ -1545,7 +1545,7 @@ const fileToCorrAttachment = (file) => new Promise((resolve, reject) => {
 });
 
 function CorrespondenceView() {
-  const { T, user, buildingId, backend, flash, store } = useApp();
+  const { T, user, building, buildingId, backend, flash, store } = useApp();
   const [mode, setMode] = useState("list");          // list | thread | compose | contacts | unfiled
   const [threads, setThreads] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -1561,10 +1561,21 @@ function CorrespondenceView() {
 
   const members = (store.users || []).filter((m) => m.buildingId === buildingId && m.authId);
 
+  // The building's sending identity, shown so the sender always knows who this goes out as.
+  const senderIdentity = building && building.name ? `${building.name} via NaloHub` : "your building via NaloHub";
+  // Auto-signature appended to the body — editable, so a sender can drop their phone if they prefer.
+  const signature = () => {
+    const l = [user && user.name, user && user.phone, user && user.email].filter(Boolean);
+    if (building && building.name) l.push(`${building.name} @ NaloHub`);
+    return l.length ? "\n\n" + l.join("\n") : "";
+  };
+  const blankCompose = () => ({ contactId: "", name: "", email: "", org: "", partyType: "other", subject: "", body: signature(), contextType: "general", contextId: "", visibility: "committee", memberIds: [] });
+  const openCompose = () => { setCf(blankCompose()); setCFiles([]); setMode("compose"); };
+
   const refresh = () => { if (!backend) return; listCorrThreads(buildingId).then(setThreads).catch((e) => flash(String(e.message || e))); listCorrContacts(buildingId).then(setContacts).catch(() => {}); };
   useEffect(() => { setMode("list"); setOpen(null); refresh(); }, [buildingId, backend]);
 
-  const openThread = async (id) => { setBusy(true); try { const d = await getCorrThread(id); setOpen(d); setReply(""); setRFiles([]); setMode("thread"); } catch (e) { flash(String(e.message || e)); } setBusy(false); };
+  const openThread = async (id) => { setBusy(true); try { const d = await getCorrThread(id); setOpen(d); setReply(signature()); setRFiles([]); setMode("thread"); } catch (e) { flash(String(e.message || e)); } setBusy(false); };
 
   const addFiles = async (fileList, setter, current) => {
     const out = [];
@@ -1587,7 +1598,7 @@ function CorrespondenceView() {
       if (cf.visibility === "restricted") payload.restrictedMemberIds = cf.memberIds;
       const res = await sendCorrespondence(payload);
       flash(res && res.deliveryStatus === "failed" ? "Logged, but delivery failed — check Resend" : "Sent");
-      setCf({ contactId: "", name: "", email: "", org: "", partyType: "other", subject: "", body: "", contextType: "general", contextId: "", visibility: "committee", memberIds: [] });
+      setCf(blankCompose());
       setCFiles([]); refresh();
       if (res && res.threadId) await openThread(res.threadId);
     } catch (e) { flash(String(e.message || e)); }
@@ -1627,10 +1638,11 @@ function CorrespondenceView() {
   // ---- list ----------------------------------------------------------------
   if (mode === "list") return (
     <div>
-      <Head title="Correspondence" sub="The building's paper trail with strata, insurers, solicitors & trades" action={<HeaderAction onClick={() => setMode("compose")}><Plus size={15} /> New</HeaderAction>} />
+      <Head title="Correspondence" sub="The building's paper trail with strata, insurers, solicitors & trades" action={<HeaderAction onClick={openCompose}><Plus size={15} /> New</HeaderAction>} />
       <Wrap>
         <HowTo id="correspondence" steps={["Compose a message to any external party — strata manager, insurer, solicitor, council, contractor. It sends by email from your building's address and every word is logged here.", "Replies thread back automatically: when they reply, it lands on the same conversation, so the whole exchange lives in one place.", "Mark threads restricted when only some committee members should see them, and close them when they're done. Nothing here can be edited or deleted — it's a permanent, tamper-evident record."]} sell="The correspondence that used to scatter across personal inboxes — now one shared, permanent record the whole committee can stand behind." />
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          <Btn grad onClick={openCompose}><Plus size={15} /> New message</Btn>
           <Btn kind="ghost" onClick={() => setMode("contacts")}><Users size={15} /> Contacts</Btn>
           <Btn kind="ghost" onClick={() => setMode("unfiled")}><Inbox size={15} /> Unfiled</Btn>
           <div className="flex-1" />
@@ -1638,7 +1650,7 @@ function CorrespondenceView() {
           <Select value={fParty} onChange={(e) => setFParty(e.target.value)}><option value="">All parties</option>{Object.keys(CORR_PARTY).map((k) => <option key={k} value={k}>{CORR_PARTY[k]}</option>)}</Select>
         </div>
         {!backend ? <Empty icon={Mail} title="Correspondence is a live-building feature" hint="Connect a real building to send and track correspondence." />
-          : shown.length === 0 ? <Empty icon={Mail} title="No correspondence yet" hint="Hit New to send your first tracked email to an external party." />
+          : shown.length === 0 ? (<div className="space-y-3"><Empty icon={Mail} title="No correspondence yet" hint="Send your first tracked email to an external party — it's logged here automatically." /><div className="text-center"><Btn grad onClick={openCompose}><Plus size={15} /> New correspondence</Btn></div></div>)
           : <Card style={{ padding: 8 }}>{shown.map((t) => (
             <button key={t.id} onClick={() => openThread(t.id)} className="w-full text-left px-3 py-3 rounded-xl" style={{ borderBottom: `1px dashed ${T.border}` }}>
               <div className="flex items-center gap-2">
@@ -1660,17 +1672,22 @@ function CorrespondenceView() {
   // ---- thread --------------------------------------------------------------
   if (mode === "thread" && open) {
     const t = open.thread;
+    const fromAddr = (open.messages.find((m) => m.direction === "outbound") || {}).fromEmail || "";
     return (
       <div>
-        <Head title={t.subject || "(no subject)"} sub={t.contact ? `${t.contact.name}${t.contact.org ? " · " + t.contact.org : ""}` : "Correspondence"} onBack={() => { setMode("list"); refresh(); }} backLabel="Correspondence" />
+        <Head title={t.contact ? t.contact.name : "Conversation"} sub={t.contact ? ([t.contact.org, CORR_PARTY[t.contact.partyType]].filter(Boolean).join(" · ") || "Correspondence") : "Correspondence"} onBack={() => { setMode("list"); refresh(); }} backLabel="Correspondence" />
         <Wrap>
           <Card style={{ padding: 16 }}>
-            <div className="flex items-center gap-2 flex-wrap">
-              {t.contact && t.contact.email && <span className="text-sm inline-flex items-center gap-1.5" style={{ color: T.textMuted }}><Mail size={14} /> {t.contact.email}</span>}
-              {t.contact && t.contact.partyType && <Badge>{CORR_PARTY[t.contact.partyType] || t.contact.partyType}</Badge>}
+            <div className="space-y-1.5 text-sm">
+              <div className="flex gap-3"><span className="w-16 shrink-0" style={{ color: T.textMuted }}>From</span><span className="font-medium">{senderIdentity}</span>{fromAddr && <span style={{ color: T.textMuted }}>&lt;{fromAddr}&gt;</span>}</div>
+              <div className="flex gap-3"><span className="w-16 shrink-0" style={{ color: T.textMuted }}>To</span><span className="font-medium">{t.contact ? t.contact.name : "—"}</span>{t.contact && t.contact.email && <span style={{ color: T.textMuted }}>&lt;{t.contact.email}&gt;</span>}</div>
+              <div className="flex gap-3"><span className="w-16 shrink-0" style={{ color: T.textMuted }}>Subject</span><span className="font-medium">{t.subject || "(no subject)"}</span></div>
+            </div>
+            <div className="flex items-center gap-2 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${T.border}` }}>
               {t.visibility === "restricted" && <Badge color={SEMANTIC.warn}><Lock size={10} /> Restricted</Badge>}
               <div className="flex-1" />
-              <Field label="Status"><Select value={t.status} onChange={(e) => changeStatus(e.target.value)}>{Object.keys(CORR_STATUS).map((k) => <option key={k} value={k}>{CORR_STATUS[k].label}</option>)}</Select></Field>
+              <span className="text-xs" style={{ color: T.textMuted }}>Status</span>
+              <div style={{ width: 170 }}><Select value={t.status} onChange={(e) => changeStatus(e.target.value)}>{Object.keys(CORR_STATUS).map((k) => <option key={k} value={k}>{CORR_STATUS[k].label}</option>)}</Select></div>
             </div>
           </Card>
           <div className="space-y-3">
@@ -1696,8 +1713,9 @@ function CorrespondenceView() {
           </div>
           {t.status !== "closed" && (
             <Card style={{ padding: 16 }}>
-              <SectionTitle>Reply</SectionTitle>
-              <TextArea rows={4} value={reply} onChange={(e) => setReply(e.target.value)} placeholder={`Reply to ${t.contact ? t.contact.name : "this thread"}…`} />
+              <SectionTitle>Reply to {t.contact ? t.contact.name : "this thread"}</SectionTitle>
+              <div className="text-xs mb-2" style={{ color: T.textMuted }}>Goes to {t.contact && t.contact.email ? t.contact.email : "the recipient"} · subject stays “{t.subject || "(no subject)"}” · sends as {senderIdentity}</div>
+              <TextArea rows={6} value={reply} onChange={(e) => setReply(e.target.value)} placeholder={`Reply to ${t.contact ? t.contact.name : "this thread"}…`} />
               <AttachChips items={rFiles} onRemove={(i) => setRFiles(rFiles.filter((_, x) => x !== i))} />
               <div className="flex items-center gap-2 mt-3">
                 <label className="text-sm cursor-pointer inline-flex items-center gap-1.5 px-3 py-2 rounded-xl" style={{ border: `1px solid ${T.border}`, color: T.textMuted }}><Paperclip size={14} /> Attach<input type="file" multiple className="hidden" onChange={(e) => addFiles(e.target.files, setRFiles, rFiles)} /></label>
@@ -1717,7 +1735,11 @@ function CorrespondenceView() {
       <Wrap>
         <Card style={{ padding: 18 }} >
           <div className="space-y-3">
-            <Field label="Contact"><Select value={cf.contactId} onChange={(e) => setCf({ ...cf, contactId: e.target.value })}><option value="">— New recipient —</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}{c.org ? ` · ${c.org}` : ""}{c.email ? ` · ${c.email}` : ""}</option>)}</Select></Field>
+            <div className="rounded-xl px-3.5 py-3 text-sm flex items-start gap-2.5" style={{ background: hexToRgba(T.accent, T.mode === "dark" ? 0.12 : 0.07), border: `1px solid ${hexToRgba(T.accent, 0.3)}` }}>
+              <Send size={16} style={{ color: T.accent, marginTop: 1 }} className="shrink-0" />
+              <div>Sends as <span className="font-semibold">{senderIdentity}</span>. Replies come straight back into this thread — recorded here for the whole committee, never lost in a personal inbox.</div>
+            </div>
+            <Field label="To — recipient"><Select value={cf.contactId} onChange={(e) => setCf({ ...cf, contactId: e.target.value })}><option value="">— New recipient —</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}{c.org ? ` · ${c.org}` : ""}{c.email ? ` · ${c.email}` : ""}</option>)}</Select></Field>
             {!cf.contactId && (<div className="grid sm:grid-cols-2 gap-3">
               <Field label="Name"><Input value={cf.name} onChange={(e) => setCf({ ...cf, name: e.target.value })} placeholder="e.g. Definitive Strata" /></Field>
               <Field label="Email"><Input type="email" value={cf.email} onChange={(e) => setCf({ ...cf, email: e.target.value })} placeholder="name@example.com" /></Field>

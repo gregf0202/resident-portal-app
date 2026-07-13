@@ -142,7 +142,7 @@ Deno.serve(async (req) => {
   let deliveryStatus = "no_provider";
   let externalId: string | null = null;
   if (RESEND_API_KEY) {
-    const footer = "\n\n—\nSent via NaloHub on behalf of your building committee. Replies to this email are recorded in NaloHub.";
+    const footer = `\n\n—\nSent via NaloHub on behalf of ${buildingName}. Be In The Nalo 👋\nFree pilot at nalohub.com`;
     const payload: any = {
       from: `"${senderName}" <${slug}@${MAIL_DOMAIN}>`,
       to: [recipient],
