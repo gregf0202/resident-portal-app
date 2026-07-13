@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
   } = body || {};
   if (!buildingId) return json({ error: "buildingId required" }, 400);
   const toEmail = contact?.email;
-  if (!threadId && !toEmail) return json({ error: "recipient email required for a new thread" }, 400);
+  if (!threadId && !toEmail && !contact?.id) return json({ error: "recipient email required for a new thread" }, 400);
 
   // --- Authorization: caller must be committee/MSC/BM of this building ---------
   const { data: isCommittee, error: ccErr } = await userClient.rpc("corr_is_committee", { bid: buildingId });
@@ -89,9 +89,16 @@ Deno.serve(async (req) => {
     }
   }
 
+  // If an existing contact was chosen by id (no email typed), fetch its email.
+  let recipientEmail = toEmail;
+  if (!recipientEmail && contactId) {
+    const { data: cRow } = await db.from("correspondence_contacts").select("email").eq("id", contactId).maybeSingle();
+    recipientEmail = cRow?.email || null;
+  }
+
   // 3. Resolve or create the thread.
   let tId = threadId || null;
-  let recipient = toEmail;
+  let recipient = recipientEmail;
   if (!tId) {
     const { data: th, error: te } = await db.from("correspondence_threads").insert({
       building_id: buildingId, subject: subject || "(no subject)", contact_id: contactId,

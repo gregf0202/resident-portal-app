@@ -702,6 +702,20 @@ export async function corrAttachmentUrl(storagePath) {
   return data?.signedUrl || "";
 }
 
+// Inbound mail that couldn't be auto-matched, for committee triage (RPC-gated).
+export async function listCorrUnfiled(bid) {
+  const { data, error } = await supabase.rpc("corr_unfiled", { bid });
+  if (error) throw error;
+  return (data || []).map((r) => ({ id: r.id, fromName: r.from_name, fromEmail: r.from_email, subject: r.subject, receivedAt: r.received_at }));
+}
+
+// File an unfiled item onto a thread; creates the inbound message, returns its id.
+export async function fileCorrUnfiled(rawId, threadId) {
+  const { data, error } = await supabase.rpc("corr_file_unfiled", { p_raw: rawId, p_thread: threadId });
+  if (error) throw error;
+  return data;
+}
+
 // ---- monthly walk-through checklist ----------------------------------------
 export async function listWalkItems(bid) {
   const { data, error } = await supabase.from("walkthrough_items").select("*").eq("building_id", bid).eq("active", true).order("sort");
@@ -1085,6 +1099,8 @@ if (DEMO_MODE) {
   updateCorrThread = async () => {};
   setCorrThreadMembers = async () => {};
   corrAttachmentUrl = async () => "";
+  listCorrUnfiled = async () => [];
+  fileCorrUnfiled = async () => "demo-msg";
   listApplications = async () => [...DS.applications].sort((a, b) => (a.submitted_at < b.submitted_at ? 1 : -1));
   createApplication = async (_b, _uid, unitId, kind, category, title, details) => {
     const aid = id();

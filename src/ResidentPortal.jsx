@@ -24,7 +24,7 @@ import { audit, searchLegislation, loadDisputes, createDispute, appendDisputeEve
   listNotifications, markNotificationRead, markAllNotificationsRead, listMotionComments, addMotionComment,
   addWalkItem, removeWalkItem, setWalkResultPhoto, setWalkResultMaint, mediaBlob, updateUnitAgent, updateMotionConditions, DEMO_UID, exportBuildingData,
   loadMyBuildingBilling, startPaymentSetup,
-  listCorrThreads, getCorrThread, listCorrContacts, saveCorrContact, sendCorrespondence, updateCorrThread, setCorrThreadMembers, corrAttachmentUrl } from "./db.js";
+  listCorrThreads, getCorrThread, listCorrContacts, saveCorrContact, sendCorrespondence, updateCorrThread, setCorrThreadMembers, corrAttachmentUrl, listCorrUnfiled, fileCorrUnfiled } from "./db.js";
 import { supabase } from "./supabaseClient.js";
 
 /*
@@ -1559,6 +1559,8 @@ function CorrespondenceView() {
   const [cf, setCf] = useState({ contactId: "", name: "", email: "", org: "", partyType: "other", subject: "", body: "", contextType: "general", contextId: "", visibility: "committee", memberIds: [] });
   const [cFiles, setCFiles] = useState([]);
   const [ct, setCt] = useState({ id: "", name: "", org: "", email: "", phone: "", partyType: "other", notes: "" });
+  const [unfiled, setUnfiled] = useState([]);
+  const [assignTo, setAssignTo] = useState({});
 
   const members = (store.users || []).filter((m) => m.buildingId === buildingId && m.authId);
 
@@ -1573,8 +1575,17 @@ function CorrespondenceView() {
   const blankCompose = () => ({ contactId: "", name: "", email: "", org: "", partyType: "other", subject: "", body: signature(), contextType: "general", contextId: "", visibility: "committee", memberIds: [] });
   const openCompose = () => { setCf(blankCompose()); setCFiles([]); setMode("compose"); };
 
-  const refresh = () => { if (!backend) return; listCorrThreads(buildingId).then(setThreads).catch((e) => flash(String(e.message || e))); listCorrContacts(buildingId).then(setContacts).catch(() => {}); };
+  const loadUnfiled = () => { if (!backend) return; listCorrUnfiled(buildingId).then(setUnfiled).catch(() => {}); };
+  const refresh = () => { if (!backend) return; listCorrThreads(buildingId).then(setThreads).catch((e) => flash(String(e.message || e))); listCorrContacts(buildingId).then(setContacts).catch(() => {}); loadUnfiled(); };
   useEffect(() => { setMode("list"); setOpen(null); refresh(); }, [buildingId, backend]);
+
+  const assignUnfiled = async (rawId, threadId) => {
+    if (!threadId) return;
+    setBusy(true);
+    try { await fileCorrUnfiled(rawId, threadId); flash("Filed to thread"); loadUnfiled(); refresh(); }
+    catch (e) { flash(String(e.message || e)); }
+    setBusy(false);
+  };
 
   const openThread = async (id) => { setBusy(true); try { const d = await getCorrThread(id); setOpen(d); setReply(signature()); setRFiles([]); setMode("thread"); } catch (e) { flash(String(e.message || e)); } setBusy(false); };
 
@@ -1677,7 +1688,7 @@ function CorrespondenceView() {
         <div className="flex flex-wrap gap-2 items-center">
           <Btn grad onClick={openCompose}><Plus size={15} /> New message</Btn>
           <Btn kind="ghost" onClick={() => setMode("contacts")}><Users size={15} /> Contacts</Btn>
-          <Btn kind="ghost" onClick={() => setMode("unfiled")}><Inbox size={15} /> Unfiled</Btn>
+          <Btn kind="ghost" onClick={() => { loadUnfiled(); setMode("unfiled"); }}><Inbox size={15} /> Unfiled{unfiled.length ? ` (${unfiled.length})` : ""}</Btn>
           <div className="flex-1" />
           <Select value={fStatus} onChange={(e) => setFStatus(e.target.value)}><option value="">All statuses</option>{Object.keys(CORR_STATUS).map((k) => <option key={k} value={k}>{CORR_STATUS[k].label}</option>)}</Select>
           <Select value={fParty} onChange={(e) => setFParty(e.target.value)}><option value="">All parties</option>{Object.keys(CORR_PARTY).map((k) => <option key={k} value={k}>{CORR_PARTY[k]}</option>)}</Select>
@@ -1833,9 +1844,23 @@ function CorrespondenceView() {
   // ---- unfiled tray --------------------------------------------------------
   if (mode === "unfiled") return (
     <div>
-      <Head title="Unfiled" sub="Inbound email that couldn't be matched to a thread" onBack={() => setMode("list")} backLabel="Correspondence" />
+      <Head title="Unfiled" sub="Inbound email we couldn't match — file it to a thread" onBack={() => { setMode("list"); refresh(); }} backLabel="Correspondence" />
       <Wrap>
-        <Empty icon={Inbox} title="Nothing unfiled" hint="Once inbound email is connected, any reply we can't match automatically will land here so it's never lost — and you can assign it to the right thread in one tap." />
+        {!backend ? <Empty icon={Inbox} title="Unfiled is a live-building feature" hint="Connect a real building to receive correspondence." />
+          : unfiled.length === 0 ? <Empty icon={Inbox} title="Nothing unfiled" hint="Any reply we can't match automatically lands here so it's never lost. You're all clear." />
+          : <Card style={{ padding: 8 }}>{unfiled.map((u) => (
+            <div key={u.id} className="px-3 py-3" style={{ borderBottom: `1px dashed ${T.border}` }}>
+              <div className="text-sm font-medium">{u.fromName || u.fromEmail || "Unknown sender"}{u.fromName && u.fromEmail ? <span style={{ color: T.textMuted }} className="font-normal"> · {u.fromEmail}</span> : null}</div>
+              <div className="text-sm">{u.subject || "(no subject)"}</div>
+              <div className="text-xs mt-0.5" style={{ color: T.textMuted }}>{corrWhen(u.receivedAt)}</div>
+              <div className="flex gap-2 mt-2 items-center">
+                <Select value={assignTo[u.id] || ""} onChange={(e) => setAssignTo({ ...assignTo, [u.id]: e.target.value })}>
+                  <option value="">File to thread…</option>
+                  {threads.map((t) => <option key={t.id} value={t.id}>{(t.contact ? t.contact.name : "Unknown")}{t.subject ? ` — ${t.subject}` : ""}</option>)}
+                </Select>
+                <Btn grad disabled={!assignTo[u.id] || busy} onClick={() => assignUnfiled(u.id, assignTo[u.id])}><Check size={15} /> File</Btn>
+              </div>
+            </div>))}</Card>}
       </Wrap>
     </div>
   );

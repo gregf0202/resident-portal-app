@@ -165,7 +165,12 @@ Deno.serve(async (req) => {
 
   if (!threadId) {
     // 7. Unfiled — durably held for committee triage; never discarded.
-    await db.from("correspondence_inbound_raw").update({ status: "unfiled", building_id: buildingId, processed_at: new Date().toISOString() }).eq("id", rawId);
+    // Store display + content fields so the committee can see and file it.
+    await db.from("correspondence_inbound_raw").update({
+      status: "unfiled", building_id: buildingId,
+      from_name: fromName, from_email: fromEmail, subject,
+      body_text: full?.text || null, body_html: full?.html || null,
+    }).eq("id", rawId);
     return ok({ unfiled: true, raw_id: rawId });
   }
 
