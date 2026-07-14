@@ -837,14 +837,14 @@ export function BuildingApp() {
         {!backend && <PreviewSwitcher />}
         <button data-tour="tour-button" onClick={startTour} className="mx-3 mt-1 mb-1 rounded-xl px-3 py-2 text-sm font-medium flex items-center gap-2" style={{ color: T.sidebarText, background: hexToRgba(T.accent, 0.16), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}><HelpCircle size={15} style={{ color: T.accent }} /> Take the tour</button>
         <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
-          {[["home", ""], ["requests", "Requests"], ["decisions", "Decisions"], ["registers", "Registers"], ["community", "Community"], ["knowledge", "Knowledge"], ["account", "Account"]].map(([grp, hdr]) => (
+          {[["home", ""], ["requests", "Requests"], ["decisions", "Decisions"], ["registers", "Registers"], ["community", "Community"], ["knowledge", "Knowledge"], ["account", "Account"]].map(([grp, hdr]) => { const items = visible.filter((n) => n.group === grp); if (!items.length) return null; return (
             <div key={grp} data-tour={grp === "home" ? undefined : `nav-group-${grp}`}>
               {hdr && <div style={{ color: T.sidebarMuted }} className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-[0.16em]">{hdr}</div>}
-              {visible.filter((n) => n.group === grp).map((n) => { const active = view === n.key; return (
+              {items.map((n) => { const active = view === n.key; return (
                 <button key={n.key} data-tour={`nav-${n.key}`} onClick={() => go(n.key)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[15px]" style={{ background: active ? T.sidebarActive : "transparent", color: active ? "#fff" : T.sidebarText, fontWeight: active ? 600 : 400 }}><n.icon size={18} className="shrink-0" style={{ color: active ? T.accent : T.sidebarMuted }} /> <span className="flex-1 text-left leading-tight">{navLabel(building, n.key, n.label)}</span>{PREMIUM_MODULES.includes(n.key) && <span title="Premium feature" className="text-[10px] font-bold shrink-0" style={{ color: "#fbbf24" }}>★</span>}{n.key === "approvals" && <NavDot kind="approvals" />}{n.key === "gallery" && <NavDot kind="gallery" />}{n.key === "alerts" && <NavDot kind="alerts" />}</button>
               ); })}
             </div>
-          ))}
+          ); })}
         </nav>
         {platformAdmin && <button onClick={exitToConsole} className="mx-3 mt-2 rounded-xl px-3 py-2 text-sm font-medium text-left flex items-center gap-2" style={{ color: T.sidebarText, background: hexToRgba(T.accent, 0.16), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}><ChevronLeft size={15} style={{ color: T.accent }} /> All buildings</button>}
         {backend && <button onClick={signOut} className="m-3 rounded-xl px-3 py-2 text-sm font-medium text-left" style={{ color: T.sidebarText, border: `1px solid ${hexToRgba("#ffffff", 0.12)}` }}>Sign out</button>}
