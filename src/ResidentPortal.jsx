@@ -668,45 +668,57 @@ function HelpHub() {
 }
 
 const NAV = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "main", show: () => true },
-  { key: "alerts", label: "Alerts", icon: Bell, group: "main", show: () => true },
-  { key: "announcements", label: "Announcements", icon: Megaphone, group: "main", show: () => true },
-  { key: "maintenance", label: "Maintenance", icon: Wrench, group: "main", show: () => true },
-  { key: "assets", label: "Asset Register", icon: Boxes, group: "main", show: (r) => isCommittee(r) || r === "manager" },
-  { key: "bookings", label: "Applications & Bookings", icon: CalendarCheck, group: "main", show: () => true },
-  { key: "approvals", label: "Approvals", icon: ClipboardCheck, group: "main", show: (r) => isApprover(r) },
-  { key: "voting", label: "Voting", icon: Vote, group: "main", show: (r) => isCommittee(r) },
-  { key: "mworkflow", label: "Maintenance Workflow", icon: ListChecks, group: "main", show: (r) => isCommittee(r) || r === "manager" },
-  { key: "reports", label: "Reports", icon: BarChart3, group: "main", show: (r) => isApprover(r) },
-  { key: "actions", label: "Action Register", icon: ListChecks, group: "main", show: (r) => isApprover(r) },
+  // Home
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "home", show: () => true },
+  { key: "alerts", label: "Alerts", icon: Bell, group: "home", show: () => true },
+  { key: "announcements", label: "Announcements", icon: Megaphone, group: "home", show: () => true },
+  // Requests
+  { key: "maintenance", label: "Maintenance", icon: Wrench, group: "requests", show: () => true },
+  { key: "bookings", label: "Applications & Bookings", icon: CalendarCheck, group: "requests", show: () => true },
+  { key: "approvals", label: "Approvals", icon: ClipboardCheck, group: "requests", show: (r) => isApprover(r) },
+  // Decisions
+  { key: "voting", label: "Voting", icon: Vote, group: "decisions", show: (r) => isCommittee(r) },
+  { key: "meetings", label: "Meetings", icon: Gavel, group: "decisions", show: (r) => r !== "tenant" },
+  { key: "actions", label: "Action Register", icon: ListChecks, group: "decisions", show: (r) => isApprover(r) },
+  { key: "reports", label: "Reports", icon: BarChart3, group: "decisions", show: (r) => isApprover(r) },
+  { key: "disputes", label: "Dispute Records", icon: ShieldCheck, group: "decisions", show: (r) => isCommittee(r), premium: true },
+  // Registers
+  { key: "mworkflow", label: "Maintenance Workflow", icon: ListChecks, group: "registers", show: (r) => isCommittee(r) || r === "manager" },
+  { key: "assets", label: "Asset Register", icon: Boxes, group: "registers", show: (r) => isCommittee(r) || r === "manager" },
+  { key: "contracts", label: "Contracts", icon: Briefcase, group: "registers", show: (r) => isCommittee(r) },
+  { key: "contractors", label: "Contractors", icon: HardHat, group: "registers", show: (r) => isCommittee(r) || r === "manager" },
+  { key: "keyfobs", label: "Key & Fob Register", icon: KeyRound, group: "registers", show: (r) => isCommittee(r) },
+  { key: "compliance", label: "Compliance Calendar", icon: CalendarClock, group: "registers", show: (r) => isCommittee(r) || r === "manager", premium: true },
+  { key: "walkthrough", label: "Walk-Through", icon: ClipboardList, group: "registers", show: (r) => isCommittee(r) || r === "manager" },
+  { key: "unitsearch", label: "Unit Search", icon: Search, group: "registers", show: (r) => isCommittee(r) },
+  { key: "correspondence", label: "Correspondence", icon: Mail, group: "registers", show: (r) => isCommittee(r) || (CORR_ALLOW_BM && r === "manager") },
+  // Community
   { key: "events", label: "Events", icon: CalendarDays, group: "community", show: () => true },
   { key: "gallery", label: "Gallery", icon: ImageIcon, group: "community", show: () => true },
   { key: "marketplace", label: "Marketplace", icon: ShoppingBag, group: "community", show: () => true },
   { key: "messaging", label: "Messaging", icon: MessageSquare, group: "community", show: () => true },
   { key: "directory", label: "Directory", icon: Users, group: "community", show: () => true },
   { key: "business", label: "Business Directory", icon: Store, group: "community", show: () => true },
-  { key: "nalopilot", label: "NaloPilot", icon: Scale, group: "building", show: () => true, premium: true },
-  { key: "bylaws", label: "By-Laws", icon: BookOpen, group: "building", show: () => true, premium: true },
-  { key: "compliance", label: "Compliance Calendar", icon: CalendarClock, group: "building", show: (r) => isCommittee(r) || r === "manager", premium: true },
-  { key: "disputes", label: "Dispute Records", icon: ShieldCheck, group: "building", show: (r) => isCommittee(r), premium: true },
-  { key: "documents", label: "Documents", icon: FileText, group: "building", show: () => true },
-  { key: "meetings", label: "Meetings", icon: Gavel, group: "building", show: (r) => r !== "tenant" },
-  { key: "keyfobs", label: "Key & Fob Register", icon: KeyRound, group: "building", show: (r) => isCommittee(r) },
-  { key: "unitsearch", label: "Unit Search", icon: Search, group: "building", show: (r) => isCommittee(r) },
-  { key: "correspondence", label: "Correspondence", icon: Mail, group: "building", show: (r) => isCommittee(r) || (CORR_ALLOW_BM && r === "manager") },
-  { key: "contracts", label: "Contracts", icon: Briefcase, group: "building", show: (r) => isCommittee(r) },
-  { key: "contractors", label: "Contractors", icon: HardHat, group: "building", show: (r) => isCommittee(r) || r === "manager" },
-  { key: "walkthrough", label: "Walk-Through", icon: ClipboardList, group: "building", show: (r) => isCommittee(r) || r === "manager" },
-  { key: "firesafety", label: "Fire Safety", icon: ShieldAlert, group: "building", show: () => true },
-  { key: "help", label: "Help", icon: HelpCircle, group: "building", show: () => true },
-  { key: "billing", label: "Billing", icon: Receipt, group: "building", show: (r) => isCommittee(r) },
-  { key: "settings", label: "Settings", icon: Settings, group: "building", show: () => true },
+  // Knowledge
+  { key: "nalopilot", label: "NaloPilot", icon: Scale, group: "knowledge", show: () => true, premium: true },
+  { key: "bylaws", label: "By-Laws", icon: BookOpen, group: "knowledge", show: () => true, premium: true },
+  { key: "documents", label: "Documents", icon: FileText, group: "knowledge", show: () => true },
+  { key: "firesafety", label: "Fire Safety", icon: ShieldAlert, group: "knowledge", show: () => true },
+  // Account
+  { key: "billing", label: "Billing", icon: Receipt, group: "account", show: (r) => isCommittee(r) },
+  { key: "help", label: "Help", icon: HelpCircle, group: "account", show: () => true },
+  { key: "settings", label: "Settings", icon: Settings, group: "account", show: () => true },
 ];
 
 // Editable labels: admin can rename a curated set of nav sections per building.
 // Stored in building.labels[key]; falls back to the NAV default.
 const RENAMABLE = ["maintenance", "assets", "bookings", "events", "gallery", "marketplace", "messaging", "directory", "business", "documents"];
 const navLabel = (building, key, fallback) => (building && building.labels && building.labels[key]) || fallback;
+
+// The nav items a given user may see. Single source of truth, shared by the
+// sidebar AND the view router so a role can never land on a screen it can't see
+// (e.g. after switching "Viewing as" in the demo).
+const navVisibleFor = (user, building, backend) => NAV.filter((n) => (n.show(user.role) || (n.key === "correspondence" && user.msc === true)) && moduleOn(building, n.key) && (n.key !== "billing" || backend) && (!n.premium || !backend || building.premiumSuite === true) && (user.role !== "strata" || ["dashboard", "announcements", "help"].includes(n.key)));
 
 // ---------- guided spotlight tour (role & module aware) ----------------------
 // Bump TOUR_VERSION when new features join the tour — returning users see it again once.
@@ -812,7 +824,7 @@ export function BuildingApp() {
   React.useEffect(() => { try { if (backend) { if (user && localStorage.getItem(tourSeenKey(user.id)) !== String(TOUR_VERSION)) setTour(true); } else if (!localStorage.getItem("nalo_seen_guide")) setShowGuide(true); } catch (e) {} }, []);
   if (!user) return null;
   if (user.status === "pending") return <PendingScreen />;
-  const visible = NAV.filter((n) => (n.show(user.role) || (n.key === "correspondence" && user.msc === true)) && moduleOn(building, n.key) && (n.key !== "billing" || backend) && (!n.premium || !backend || building.premiumSuite === true) && (user.role !== "strata" || ["dashboard", "announcements", "help"].includes(n.key)));
+  const visible = navVisibleFor(user, building, backend);
   const go = (v) => { setView(v); setNavOpen(false); };
   return (
     <div className="flex">
@@ -825,9 +837,9 @@ export function BuildingApp() {
         {!backend && <PreviewSwitcher />}
         <button data-tour="tour-button" onClick={startTour} className="mx-3 mt-1 mb-1 rounded-xl px-3 py-2 text-sm font-medium flex items-center gap-2" style={{ color: T.sidebarText, background: hexToRgba(T.accent, 0.16), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}><HelpCircle size={15} style={{ color: T.accent }} /> Take the tour</button>
         <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
-          {["main", "community", "building"].map((grp) => (
-            <div key={grp} data-tour={grp === "main" ? undefined : `nav-group-${grp}`}>
-              {grp !== "main" && <div style={{ color: T.sidebarMuted }} className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-[0.16em]">{grp === "community" ? "Community" : "Building"}</div>}
+          {[["home", ""], ["requests", "Requests"], ["decisions", "Decisions"], ["registers", "Registers"], ["community", "Community"], ["knowledge", "Knowledge"], ["account", "Account"]].map(([grp, hdr]) => (
+            <div key={grp} data-tour={grp === "home" ? undefined : `nav-group-${grp}`}>
+              {hdr && <div style={{ color: T.sidebarMuted }} className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-[0.16em]">{hdr}</div>}
               {visible.filter((n) => n.group === grp).map((n) => { const active = view === n.key; return (
                 <button key={n.key} data-tour={`nav-${n.key}`} onClick={() => go(n.key)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[15px]" style={{ background: active ? T.sidebarActive : "transparent", color: active ? "#fff" : T.sidebarText, fontWeight: active ? 600 : 400 }}><n.icon size={18} className="shrink-0" style={{ color: active ? T.accent : T.sidebarMuted }} /> <span className="flex-1 text-left leading-tight">{navLabel(building, n.key, n.label)}</span>{PREMIUM_MODULES.includes(n.key) && <span title="Premium feature" className="text-[10px] font-bold shrink-0" style={{ color: "#fbbf24" }}>★</span>}{n.key === "approvals" && <NavDot kind="approvals" />}{n.key === "gallery" && <NavDot kind="gallery" />}{n.key === "alerts" && <NavDot kind="alerts" />}</button>
               ); })}
@@ -966,9 +978,14 @@ function Billing() {
 
 // ---------- view router -----------------------------------------------------
 function ViewRouter() {
-  const { view } = useApp();
+  const { view, setView, user, building, backend } = useApp();
+  // Central role guard: if the current screen isn't one this role may see
+  // (e.g. after switching "Viewing as" in the demo), fall back to the dashboard.
+  // This protects every screen at once, so individual views don't each have to.
+  const allowed = !user || navVisibleFor(user, building, backend).some((n) => n.key === view);
+  React.useEffect(() => { if (user && !allowed) setView("dashboard"); }, [allowed, user, view]);
   const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, assets: AssetRegister, bookings: ApplicationsBookings, unitsearch: UnitSearchView, correspondence: CorrespondenceView, voting: VotingView, mworkflow: MaintWorkflowView, contracts: ContractsView, contractors: ContractorsView, walkthrough: WalkthroughView, alerts: AlertsView, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, help: HelpHub, settings: SettingsView, nalopilot: NaloPilotView, bylaws: ByLawsView, compliance: ComplianceView, disputes: DisputeRecordsView };
-  const C = map[view] || Dashboard;
+  const C = map[allowed ? view : "dashboard"] || Dashboard;
   return <C />;
 }
 
