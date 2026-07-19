@@ -2590,7 +2590,7 @@ function ContractorsLive() {
     <div>
       <Head title="Contractors" sub="Approved & preferred trades, licences and insurance" />
       <Wrap>
-        <HowTo id="contractors" steps={["Build your trusted trades list once — licence numbers, insurance expiry, preferred or approved status, a star rating.", "Insurance renewing within 60 days glows amber.", "Quotes in the Maintenance Workflow link straight to this register, so due diligence is already done when you vote."]} sell="\u201CWho did we use for the gate last time, and were they insured?\u201D — answered in two taps, forever." />
+        <HowTo id="contractors" steps={["Build your trusted trades list once — licence numbers, insurance expiry, preferred or approved status, a star rating.", "Insurance renewing within 60 days glows amber.", "Quotes in the Maintenance Workflow link straight to this register, so due diligence is already done when you vote."]} sell="“Who did we use for the gate last time, and were they insured?” — answered in two taps, forever." />
         <Btn grad onClick={() => setAdding(!adding)}><Plus size={15} /> Add contractor</Btn>
         {adding && (<Card style={{ padding: 18 }}><div className="grid sm:grid-cols-2 gap-3">
           <Field label="Company"><Input value={f.company_name} onChange={(e) => setF({ ...f, company_name: e.target.value })} /></Field>
