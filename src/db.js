@@ -678,6 +678,24 @@ export async function sendCorrespondence(payload) {
   return data; // { ok, threadId, messageId, deliveryStatus }
 }
 
+// Email an announcement to the residents it targets (in addition to the in-app
+// notice). Recipients are resolved server-side from memberships.
+export async function sendAnnouncementEmail(payload) {
+  const { data, error } = await supabase.functions.invoke("send-announcement", { body: payload });
+  if (error) throw error;
+  if (data && data.error) throw new Error(data.error);
+  return data; // { ok, sent, id? }
+}
+
+// Ensure (and return) this building's single public inbound address, e.g.
+// "seahaven@send.nalohub.com". Committee-only; provisions a clean slug on first call.
+export async function ensureBuildingMailbox(buildingId) {
+  const { data, error } = await supabase.functions.invoke("ensure-mailbox", { body: { buildingId } });
+  if (error) throw error;
+  if (data && data.error) throw new Error(data.error);
+  return data; // { slug, address, existing }
+}
+
 // Update a thread's status / visibility / subject.
 export async function updateCorrThread(threadId, patch) {
   const row = {};
@@ -1029,7 +1047,7 @@ if (DEMO_MODE) {
     permits: [{ id: "permit-1", application_id: "app-2", permit_no: "PP-0007", unit_number: "12", vehicle_make: "Mazda", vehicle_model: "CX-5", vehicle_colour: "Blue", vehicle_rego: "456XYZ", date_from: dAhead(-20), date_to: dAhead(345), approval_date: dAhead(-19), status: "active" }],
     motions: [
       { id: "mo-1", title: "Approve: Pet approval — Luna (ragdoll cat)", description: "Indoor cat, desexed and microchipped.", context_type: "application", context_id: "app-1", details: { category: "pet", unit: "12", conditions: ["The animal must be kept within the lot and under control on common property at all times.", "The animal must not cause nuisance, noise or interference with other residents.", "All animal waste must be removed and disposed of appropriately.", "Approval is specific to the animal named in the application and is not transferable."] }, eligible_count: 6, threshold: 4, status: "open", opened_by: "u-owner", opened_at: daysAgo(1), outcome_note: null },
-      { id: "mo-2", title: "Accept Bright Spark quote $2,350 — Car park gate motor", description: "Gate sticks halfway with grinding noise. Sub-committee recommends preferred electrician.", context_type: "maintenance", context_id: "m-demo", details: { quote_id: "q-1", trail: ["triage: High priority — gate could fail closed. Owen coordinating quotes.", "quote added: Quote from Bright Spark Electrical: $2350", "quote added: Quote from GateWorks QLD: $3100", "recommendation: Sub-committee recommends Bright Spark (preferred, 5-star)."] }, eligible_count: 6, threshold: 4, status: "passed", opened_by: DEMO_UID, opened_at: daysAgo(6), decided_at: daysAgo(4), outcome_note: "4 yes / 1 no / 1 abstained of 6 members" },
+      { id: "mo-2", title: "Accept Bright Spark quote $2,350 — Car park gate motor", description: "Gate sticks halfway with grinding noise. Sub-committee recommends preferred electrician.", context_type: "maintenance", context_id: "m-demo", details: { quote_id: "q-1", attachments: [{ name: "Bright-Spark-quote.txt", type: "text/plain", data: "data:text/plain;charset=utf-8," + encodeURIComponent("QUOTE — Bright Spark Electrical\nCar park gate motor replacement (supply + install)\nTotal: $2,350 incl GST\nValid 30 days · Licence QLD-EL-12345") }], trail: ["triage: High priority — gate could fail closed. Owen coordinating quotes.", "quote added: Quote from Bright Spark Electrical: $2350", "quote added: Quote from GateWorks QLD: $3100", "recommendation: Sub-committee recommends Bright Spark (preferred, 5-star)."] }, eligible_count: 6, threshold: 4, status: "passed", opened_by: DEMO_UID, opened_at: daysAgo(6), decided_at: daysAgo(4), outcome_note: "4 yes / 1 no / 1 abstained of 6 members" },
     ],
     votes: [
       { id: id(), motion_id: "mo-1", voter_user_id: "u-bcc2", vote: "yes", comment: "Lovely quiet breed.", created_at: daysAgo(1) },
@@ -1136,6 +1154,8 @@ if (DEMO_MODE) {
   getCorrThread = async (tid) => { const t = DS.corr.threads.find((x) => x.id === tid); if (!t) return { thread: null, messages: [] }; return { thread: { id: t.id, buildingId: t.buildingId, subject: t.subject, status: t.status, visibility: t.visibility, contextType: t.contextType, contextId: t.contextId, createdBy: t.createdBy, createdAt: t.createdAt, lastActivityAt: t.lastActivityAt, contact: t.contact }, messages: [...t.messages].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)) }; };
   listCorrContacts = async () => [...DS.corr.contacts].sort((a, b) => a.name.localeCompare(b.name)).map((c) => ({ id: c.id, name: c.name, org: c.org, email: c.email, phone: c.phone, partyType: c.partyType, notes: c.notes || "" }));
   saveCorrContact = async (_b, c) => { if (c && c.id) { const x = DS.corr.contacts.find((y) => y.id === c.id); if (x) Object.assign(x, { name: c.name, org: c.org, email: c.email, phone: c.phone, partyType: c.partyType, party_type: c.partyType, notes: c.notes }); return c.id; } const nc = { id: id(), name: c.name, org: c.org || "", email: c.email || "", phone: c.phone || "", partyType: c.partyType || "other", party_type: c.partyType || "other", notes: c.notes || "" }; DS.corr.contacts.push(nc); return nc.id; };
+  sendAnnouncementEmail = async () => ({ ok: true, sent: 0 });
+  ensureBuildingMailbox = async () => ({ slug: null, address: null, existing: false });
   sendCorrespondence = async (payload) => {
     const p = payload || {};
     let t = p.threadId ? DS.corr.threads.find((x) => x.id === p.threadId) : null;
