@@ -7,7 +7,7 @@ import {
   Tag, Calendar, Phone, RefreshCw, Sofa, Dumbbell, FolderOpen, Trash2,
   Sun, Cloud, CloudRain, CloudSun, Gavel, Wind, MessageCircle, Download, Printer, BarChart3,
   Video, ExternalLink, ListChecks, Vote, KeyRound, ShieldAlert, Search, Store, ThumbsUp, HelpCircle, Pencil,
-  Boxes, Bell, DollarSign, Smartphone, Inbox,
+  Boxes, Bell, DollarSign, Smartphone, Inbox, Rocket, Trophy, Copy,
   Scale, BookOpen, ShieldCheck, CalendarClock, AlertTriangle, Send, Info,
   Briefcase, HardHat, ClipboardList,
 } from "lucide-react";
@@ -164,6 +164,10 @@ function makeDemo() {
   const owners = users.filter((u) => u.role === "owner");
   for (let i = 0; i < 5 && i < owners.length; i++) owners[i].role = "bcc";
   for (let i = 5; i < 8 && i < owners.length; i++) owners[i].msc = true;
+  // Invited-but-not-yet-aboard residents: fuel for the "aboard" meter. The
+  // "invited" status is invisible to every other screen (they all key off
+  // "active" or "pending"), so these add launch-story life without noise.
+  for (let i = 0; i < 58; i++) users.push({ id: "inv" + i, buildingId: "b1", name: nm(), unit: rnd(units), tower: "", floor: String(ri(1, 10)), role: chance(0.7) ? "owner" : "tenant", status: "invited", email: "", phone: "", directoryOptIn: false, showPhone: false, showEmail: false, msc: false, lastSeenGallery: "" });
   users.push({ id: "pend1", buildingId: "b1", name: nm(), unit: rnd(units), role: "owner", status: "pending", email: "new@seahaven.com.au", phone: "", directoryOptIn: false, showPhone: false, showEmail: false, msc: false, lastSeenGallery: isoAgo(1) });
   const bccNames = users.filter((u) => u.role === "bcc" || u.role === "admin").map((u) => u.name);
   const mscNames = users.filter((u) => u.msc).map((u) => u.name);
@@ -240,7 +244,7 @@ function makeDemo() {
   const EVAC_PLAN_DEMO = { name: "SeaHaven-Level6-Evacuation-Plan.svg", type: "image/svg+xml", data: "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 380' font-family='system-ui,sans-serif'><rect width='600' height='380' fill='#f8fafc'/><rect x='20' y='20' width='560' height='340' fill='none' stroke='#0f172a' stroke-width='3'/><rect x='120' y='150' width='360' height='70' fill='#e2e8f0'/><rect x='30' y='30' width='180' height='110' fill='#fff' stroke='#94a3b8'/><text x='120' y='90' font-size='16' text-anchor='middle' fill='#334155'>Unit 601</text><rect x='230' y='30' width='160' height='110' fill='#fff' stroke='#94a3b8'/><text x='310' y='90' font-size='16' text-anchor='middle' fill='#334155'>Unit 602</text><rect x='410' y='30' width='160' height='110' fill='#fff' stroke='#94a3b8'/><text x='490' y='90' font-size='16' text-anchor='middle' fill='#334155'>Lift lobby</text><rect x='30' y='230' width='240' height='120' fill='#fff' stroke='#94a3b8'/><text x='150' y='295' font-size='16' text-anchor='middle' fill='#334155'>Common room</text><rect x='300' y='230' width='270' height='120' fill='#fff' stroke='#94a3b8'/><text x='435' y='295' font-size='16' text-anchor='middle' fill='#334155'>Car park ramp</text><defs><marker id='ar' markerWidth='10' markerHeight='10' refX='6' refY='3' orient='auto'><path d='M0,0 L6,3 L0,6 Z' fill='#16a34a'/></marker></defs><g stroke='#16a34a' stroke-width='4' fill='none'><path d='M300 185 H535' marker-end='url(#ar)'/><path d='M300 185 H62' marker-end='url(#ar)'/></g><g fill='#16a34a'><rect x='548' y='170' width='34' height='30'/><text x='565' y='190' font-size='11' fill='#fff' text-anchor='middle'>EXIT</text></g><g fill='#16a34a'><rect x='18' y='170' width='34' height='30'/><text x='35' y='190' font-size='11' fill='#fff' text-anchor='middle'>EXIT</text></g><circle cx='300' cy='185' r='9' fill='#dc2626'/><text x='300' y='140' font-size='13' text-anchor='middle' fill='#dc2626' font-weight='bold'>YOU ARE HERE</text><circle cx='500' cy='320' r='16' fill='#16a34a'/><text x='500' y='325' font-size='14' fill='#fff' text-anchor='middle'>A</text><text x='500' y='355' font-size='12' text-anchor='middle' fill='#334155'>Assembly area</text><text x='300' y='372' font-size='11' text-anchor='middle' fill='#64748b'>SeaHaven — Level 6 evacuation plan (sample)</text></svg>") };
   return {
     buildings: [
-      { id: "b1", name: DEMO.buildingName, type: "Residential apartments", address: DEMO.address, schemeRef: "CTS 31245", evacPlan: EVAC_PLAN_DEMO, logoText: "SH", logoImage: SEAHAVEN_LOGO, units: 100, floors: 10, towers: 1, strataManager: "Definitive Strata Co.", buildingManager: "Marcus Hale", towerDesc: DEMO.tower, bccEmail: "committee@seahaven.com.au", strataContactName: "Janine Carter", strataContactPhone: "07 3000 4500", strataContactEmail: "janine@definitivestrata.com.au", facilities: { bbq: true, visitor: true, lift: true, common: true, gym: true }, modules: { events: true, gallery: true, marketplace: true, messaging: true, directory: true, business: true, documents: true, meetings: true, keyfobs: true, firesafety: true, whatsapp: true }, themeId: DEMO.theme, whatsappLink: "https://chat.whatsapp.com/EXAMPLE-GROUP", whatsappName: "WhatsApp Group", emergency: [{ label: "After-hours building emergency line", number: "1300 555 010" }], fireNotes: "" },
+      { id: "b1", name: DEMO.buildingName, type: "Residential apartments", address: DEMO.address, schemeRef: "CTS 31245", evacPlan: EVAC_PLAN_DEMO, logoText: "SH", logoImage: SEAHAVEN_LOGO, units: 100, floors: 10, towers: 1, strataManager: "Definitive Strata Co.", buildingManager: "Marcus Hale", towerDesc: DEMO.tower, bccEmail: "committee@seahaven.com.au", strataContactName: "Janine Carter", strataContactPhone: "07 3000 4500", strataContactEmail: "janine@definitivestrata.com.au", facilities: { bbq: true, visitor: true, lift: true, common: true, gym: true }, modules: { events: true, gallery: true, marketplace: true, messaging: true, directory: true, business: true, documents: true, meetings: true, keyfobs: true, firesafety: true, whatsapp: true }, themeId: DEMO.theme, whatsappLink: "https://chat.whatsapp.com/EXAMPLE-GROUP", whatsappName: "WhatsApp Group", emergency: [{ label: "After-hours building emergency line", number: "1300 555 010" }], fireNotes: "", community: "full", launchedAt: "", recognition: { badges: { u1: ["founding", "explorer"] }, milestones: {} }, onboarding: { done: { p1s1: true, p1s2: true, p1s3: true, p1s4: true, p1s5: true, p1s6: true, p1s7: true, p2s1: true, p2s2: true, p2s3: true, p2s4: true, p2s5: true, p2s6: true, p2s7: true, p3s1: true, p3s2: true, p3s3: true, p3s5: true, p3s9: true, p4s1: true, p4s2: true }, na: { p3s7: false, p3s4: true }, notes: { p2s5: "Committee agreed: aim for the first weekend next month.", p4s3: "Chasing the May minutes from the secretary.", p5s2: "Strata + insurer notified; solicitor next." } } },
       { id: "b2", name: "Riverbend Apartments", type: "Mixed-use residential", address: "3 Ferry Rd, Bulimba QLD", schemeRef: "CTS 40917", logoText: "RB", logoImage: "", units: 56, floors: 6, towers: 2, strataManager: "Northshore Body Corp", buildingManager: "", towerDesc: "", bccEmail: "", strataContactName: "", strataContactPhone: "", strataContactEmail: "", facilities: { bbq: true, visitor: true, lift: true, common: false, gym: true }, modules: { events: true, gallery: true, marketplace: false, messaging: true, directory: true, business: false, documents: true, meetings: true, keyfobs: true, firesafety: true, whatsapp: false }, themeId: "midnight", whatsappLink: "", whatsappName: "", emergency: [], fireNotes: "" },
     ],
     users: users.concat(b2users),
@@ -675,6 +679,7 @@ function HelpHub() {
 const NAV = [
   // Home
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "home", show: () => true },
+  { key: "onboarding", label: "Getting Started", icon: Rocket, group: "home", show: (r) => isCommittee(r) },
   { key: "alerts", label: "Alerts", icon: Bell, group: "home", show: () => true },
   { key: "announcements", label: "Announcements", icon: Megaphone, group: "home", show: () => true },
   // Requests
@@ -993,7 +998,7 @@ function ViewRouter() {
   // This protects every screen at once, so individual views don't each have to.
   const allowed = !user || navVisibleFor(user, building, backend).some((n) => n.key === view);
   React.useEffect(() => { if (user && !allowed) setView("dashboard"); }, [allowed, user, view]);
-  const map = { dashboard: Dashboard, announcements: Announcements, maintenance: Maintenance, assets: AssetRegister, bookings: ApplicationsBookings, unitsearch: UnitSearchView, correspondence: CorrespondenceView, voting: VotingView, mworkflow: MaintWorkflowView, contracts: ContractsView, contractors: ContractorsView, walkthrough: WalkthroughView, alerts: AlertsView, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, help: HelpHub, settings: SettingsView, nalopilot: NaloPilotView, bylaws: ByLawsView, compliance: ComplianceView, disputes: DisputeRecordsView };
+  const map = { dashboard: Dashboard, onboarding: OnboardingView, announcements: Announcements, maintenance: Maintenance, assets: AssetRegister, bookings: ApplicationsBookings, unitsearch: UnitSearchView, correspondence: CorrespondenceView, voting: VotingView, mworkflow: MaintWorkflowView, contracts: ContractsView, contractors: ContractorsView, walkthrough: WalkthroughView, alerts: AlertsView, approvals: Approvals, reports: Reports, actions: ActionRegister, events: Events, gallery: Gallery, marketplace: Marketplace, messaging: Messaging, directory: Directory, documents: Documents, meetings: Meetings, keyfobs: KeyFobRegister, firesafety: FireSafety, business: BusinessDirectory, billing: Billing, help: HelpHub, settings: SettingsView, nalopilot: NaloPilotView, bylaws: ByLawsView, compliance: ComplianceView, disputes: DisputeRecordsView };
   const C = map[allowed ? view : "dashboard"] || Dashboard;
   return <C />;
 }
@@ -1084,6 +1089,7 @@ function Dashboard() {
         </div>
       </AnimatedHeader>
       <Wrap>
+        <WelcomeBanner />
         <Weather />
         {isApprover(user.role) && pendingAcc > 0 && (
           <button onClick={() => setView("approvals")} className="w-full text-left rounded-2xl px-5 py-4 flex items-center gap-3 rp-fade" style={{ background: hexToRgba(SEMANTIC.warn, T.mode === "dark" ? 0.18 : 0.12), border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.4)}` }}><UserPlus style={{ color: SEMANTIC.warn }} /><div className="flex-1"><div className="font-semibold">{pendingAcc} resident{pendingAcc > 1 ? "s" : ""} waiting for access</div><div style={{ color: T.textMuted }} className="text-sm">Review and approve to let them in.</div></div><ChevronRight style={{ color: T.textMuted }} /></button>
@@ -1097,7 +1103,9 @@ function Dashboard() {
           {EX.filter((e) => moduleOn(building, e.go)).map((e) => (<button key={e.label} onClick={() => setView(e.go)} className="flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 rp-hover" style={{ background: T.surface, border: `1px solid ${T.border}` }}><span className="h-7 w-7 rounded-full grid place-items-center text-white" style={{ background: `linear-gradient(135deg, ${e.hue[0]}, ${e.hue[1]})` }}><e.icon size={14} /></span><span className="text-sm font-medium" style={{ color: T.text }}>{e.label}</span>{e.n > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: hexToRgba(e.hue[1], 0.16), color: e.hue[1] }}>{e.n}{e.nl ? ` ${e.nl}` : ""}</span>}</button>))}
           {(building.modules ? building.modules.whatsapp !== false : true) && <button onClick={() => building.whatsappLink ? openExternal(building.whatsappLink) : flash("WhatsApp Group not set up")} className="flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 rp-hover" style={{ background: T.surface, border: `1px solid ${T.border}` }}><span className="h-7 w-7 rounded-full grid place-items-center text-white" style={{ background: "linear-gradient(135deg, #25D366, #128C7E)" }}><MessageCircle size={14} /></span><span className="text-sm font-medium" style={{ color: T.text }}>{building.whatsappName || "WhatsApp Group"}</span><ExternalLink size={12} style={{ color: T.textMuted }} /></button>}
         </div></div>
+        {!isStrata(user.role) && <AboardMeter />}
         {!isStrata(user.role) && <CommitteePlaybook />}
+        {!isStrata(user.role) && <BadgeShelf />}
         <WhatsOn />
       </Wrap>
     </div>
@@ -2059,7 +2067,7 @@ const PB_HEADINGS = {
   tenant: ["Make this place yours — six quick wins", "Everything you need as a resident, one tap at a time.", "You're in the Nalo 🎉", "That's the whole toolkit. This card retires itself — the tour is in the menu whenever you want a refresher."],
 };
 function CommitteePlaybook() {
-  const { T, user, setView } = useApp();
+  const { T, user, setView, building, update, flash } = useApp();
   const flavour = isCommittee(user.role) || user.role === "manager" ? "committee" : user.role === "tenant" ? "tenant" : "owner";
   const ITEMS = flavour === "committee" ? PLAYBOOK : PLAYBOOKS[flavour];
   const [h1, h2, c1, c2] = PB_HEADINGS[flavour];
@@ -2075,6 +2083,10 @@ function CommitteePlaybook() {
     const next = { ...done, [item.key]: true };
     setDone(next);
     try { localStorage.setItem(pbKey(user.id), JSON.stringify(next)); } catch (e) {}
+    // Be In the Nalo: quiet thank-yous as the first week comes together.
+    const nn = ITEMS.filter((i) => next[i.key]).length;
+    if (nn >= 3) grantBadge(update, { building, user, flash }, "explorer");
+    if (nn === ITEMS.length) { grantBadge(update, { building, user, flash }, "settled"); if (celebOn(building, user)) flash("\u{1F389} First week \u2014 done. You're in the Nalo."); }
     setView(item.view);
   };
   const hide = () => { setHidden(true); try { localStorage.setItem(pbKey(user.id) + "_hide", "1"); } catch (e) {} };
@@ -2102,6 +2114,243 @@ function CommitteePlaybook() {
     </Card>
   );
 }
+
+// ---------- Be In the Nalo — welcome & recognition (Phase 1) ----------------
+// The committee sets the building's Community layer (building.community):
+//   "full" (default)  welcome, badges, aboard meter, celebration toasts
+//   "gentle"          the layer stays, celebrations go quiet
+//   "essentials"      the whole layer is off
+// Each resident can dial their own Celebrations (localStorage, like the
+// playbook); the app honours the MORE restrictive of the two. Durable awards
+// live on the building record (building.recognition) so they persist through
+// the existing JSONB store with no schema change.
+const COMMUNITY_LEVEL = { full: 3, gentle: 2, essentials: 1, on: 3, off: 1 };
+const communityMode = (b) => (b && b.community) || "full";
+const celebKey = (uid) => `nalo_celebrations_${uid || "anon"}`;
+const celebPref = (uid) => { try { return localStorage.getItem(celebKey(uid)) || "on"; } catch (e) { return "on"; } };
+const recogLevel = (b, uid) => Math.min(COMMUNITY_LEVEL[communityMode(b)] || 3, COMMUNITY_LEVEL[celebPref(uid)] || 3);
+const recogOn = (b, u) => !!u && !isStrata(u.role) && recogLevel(b, u.id) >= 2;
+const celebOn = (b, u) => !!u && !isStrata(u.role) && recogLevel(b, u.id) >= 3;
+const foundingEra = (b) => { const L = b && b.launchedAt; if (!L) return true; return (new Date(today()) - new Date(L)) / 86400000 <= 30; };
+const BADGE_DEFS = [
+  { id: "founding", icon: "\u{1F331}", name: "Founding Resident", hint: "Aboard from the building's first days" },
+  { id: "explorer", icon: "\u{1F9ED}", name: "Explorer", hint: "Three first-week wins down" },
+  { id: "settled", icon: "\u{1F6DF}", name: "Settled In", hint: "Finished the first-week guide" },
+];
+const userBadges = (b, uid) => (((b || {}).recognition || {}).badges || {})[uid] || [];
+function grantBadge(update, ctx, id) {
+  const { building, user, flash } = ctx;
+  if (!recogOn(building, user) || userBadges(building, user.id).includes(id)) return;
+  update((s) => { const bb = s.buildings.find((x) => x.id === building.id); if (!bb) return; bb.recognition = bb.recognition || {}; bb.recognition.badges = bb.recognition.badges || {}; const cur = bb.recognition.badges[user.id] || []; if (!cur.includes(id)) bb.recognition.badges[user.id] = cur.concat(id); });
+  if (celebOn(building, user)) { const d = BADGE_DEFS.find((x) => x.id === id); flash(`${d ? d.icon : "\u{1F3C5}"} Badge earned \u2014 ${d ? d.name : id}`); }
+}
+
+function WelcomeBanner() {
+  const { T, building, user, update, flash } = useApp();
+  const k = `nalo_welcome_${user.id}`;
+  const [seen, setSeen] = useState(() => { try { return localStorage.getItem(k) === "1"; } catch (e) { return false; } });
+  useEffect(() => { if (!seen && recogOn(building, user) && foundingEra(building)) grantBadge(update, { building, user, flash }, "founding"); }, []); // eslint-disable-line
+  if (seen || !recogOn(building, user)) return null;
+  const dismiss = () => { setSeen(true); try { localStorage.setItem(k, "1"); } catch (e) {} };
+  return (
+    <Card style={{ padding: 18, border: `1px solid ${hexToRgba(T.accent, 0.35)}`, background: `linear-gradient(120deg, ${hexToRgba(T.accent, 0.14)}, ${hexToRgba(T.accent2, 0.08)})` }} className="rp-fade">
+      <div className="flex items-start gap-3">
+        <div className="flex-1"><div className="font-bold">Welcome to {building.name}, {user.name.split(" ")[0]}.</div>
+          <div style={{ color: T.textMuted }} className="text-sm mt-0.5">Great to have you in the Nalo {"\u{1F30A}"} This is your building's home for notices, repairs and the good stuff.</div></div>
+        <button onClick={dismiss} title="Dismiss" style={{ color: T.textMuted }}><X size={16} /></button>
+      </div>
+    </Card>
+  );
+}
+
+function AboardMeter() {
+  const { T, store, building, buildingId, user, update, flash } = useApp();
+  const roll = store.users.filter((u) => u.buildingId === buildingId && !isStrata(u.role) && u.role !== "manager" && (u.status === "active" || u.status === "invited" || u.status === "pending"));
+  const aboard = roll.filter((u) => u.status === "active").length;
+  const pct = roll.length ? Math.round((aboard / roll.length) * 100) : 0;
+  const ms = ((building.recognition || {}).milestones) || {};
+  useEffect(() => {
+    if (!recogOn(building, user)) return;
+    const hit = [50, 75, 100].filter((m) => pct >= m && !ms[m]);
+    if (!hit.length) return;
+    update((s) => { const bb = s.buildings.find((x) => x.id === building.id); if (!bb) return; bb.recognition = bb.recognition || {}; bb.recognition.milestones = { ...(bb.recognition.milestones || {}) }; hit.forEach((m) => { bb.recognition.milestones[m] = true; }); });
+    if (celebOn(building, user)) { const top = hit[hit.length - 1]; flash(top === 100 ? `\u{1F389} All of ${building.name} is aboard. Thank you, everyone.` : `\u{1F30A} ${building.name} just passed ${top}% aboard!`); }
+  }, [pct]); // eslint-disable-line
+  if (!recogOn(building, user) || roll.length < 5) return null;
+  return (
+    <Card style={{ padding: 18 }} className="rp-fade">
+      <div className="flex items-baseline justify-between"><div className="font-bold text-xl">{pct}%</div><div style={{ color: T.textMuted }} className="text-xs">of {building.name} is aboard</div></div>
+      <div className="h-2.5 rounded-full mt-2.5 overflow-hidden" style={{ background: hexToRgba(T.accent, 0.13) }}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${T.accent}, ${T.accent2})` }} />
+      </div>
+      <div style={{ color: T.textMuted }} className="text-[11px] mt-1.5">Every neighbour who joins fills it a little more.</div>
+    </Card>
+  );
+}
+
+function BadgeShelf() {
+  const { T, building, user } = useApp();
+  if (!recogOn(building, user)) return null;
+  const earned = userBadges(building, user.id);
+  if (!earned.length) return null;
+  return (
+    <Card style={{ padding: 18 }} className="rp-fade">
+      <SectionTitle>Your badges</SectionTitle>
+      <div className="flex flex-wrap gap-2.5">
+        {BADGE_DEFS.filter((b) => earned.includes(b.id)).map((b) => (
+          <div key={b.id} title={b.hint} className="flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5" style={{ background: T.surfaceAlt, border: `1px solid ${T.border}` }}>
+            <span className="h-7 w-7 rounded-full grid place-items-center" style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})` }}>{b.icon}</span>
+            <span className="text-sm font-medium">{b.name}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ color: T.textMuted }} className="text-[11px] mt-2">Little thank-yous — never a scoreboard.</div>
+    </Card>
+  );
+}
+
+// ---------- Getting Started — the committee's shared launch tracker ---------
+// The living record of a building's road to resident launch. Committee-only;
+// progress lives on the building record (building.onboarding = {done, na,
+// notes}) so every committee member sees the same state, and it persists via
+// the existing JSONB store. Ticking the final gate stamps building.launchedAt,
+// which also closes the Founding Resident window 30 days later.
+const OB_OWNERS = { A: "Admin", C: "Champion", B: "Committee", AC: "Admin + Champion" };
+const ONBOARD = [
+  { n: 1, name: "Pre-Flight", sub: "set the building up", steps: [
+    { id: "p1s1", t: "Create the building in NaloHub (production)", o: "A" },
+    { id: "p1s2", t: "Set the Admin, and add the Champion as committee", o: "A" },
+    { id: "p1s3", t: "Confirm the building's public inbox address", o: "A" },
+    { id: "p1s4", t: "Choose the plan tier for this building's size", o: "A" },
+    { id: "p1s5", t: "Set up the building's billing (per the chosen plan)", o: "A" },
+    { id: "p1s6", t: "Check magic-link sign-in works with a test email", o: "A" },
+    { id: "p1s7", t: "Have the demo link ready to show the committee", o: "A", opt: true },
+  ] },
+  { n: 2, name: "Crew Briefing", sub: "the committee decides & aligns", steps: [
+    { id: "p2s1", t: "Show the committee a 15-min demo", o: "C" },
+    { id: "p2s2", t: "Committee agrees in principle to trial NaloHub", o: "B", note: "Record the decision in the minutes.", gate: true },
+    { id: "p2s3", t: "Committee approves the NaloHub subscription", o: "B" },
+    { id: "p2s4", t: "Confirm the Transition Champion", o: "B" },
+    { id: "p2s5", t: "Agree a target readiness date", o: "B", note: "Resident-launch timing stays the committee's call." },
+    { id: "p2s6", t: "Agree the starter modules for v1 (keep it lean)", o: "AC" },
+    { id: "p2s7", t: "Every committee member signs in once", o: "B" },
+  ] },
+  { n: 3, name: "Systems Check", sub: "configure the building", steps: [
+    { id: "p3s1", t: "Enter building name, address & scheme reference", o: "A" },
+    { id: "p3s2", t: "Enter units / floors / towers", o: "A" },
+    { id: "p3s3", t: "Enter strata manager & building manager details", o: "A", note: "Needs info from the committee." },
+    { id: "p3s4", t: "Set up the building & strata managers as users", o: "A", opt: true },
+    { id: "p3s5", t: "Enter emergency & after-hours contacts", o: "A", note: "Needs info from the committee." },
+    { id: "p3s6", t: "Enter facilities (BBQ, visitor parking, lift\u2026)", o: "A", opt: true },
+    { id: "p3s7", t: "Add the WhatsApp group link", o: "A", opt: true },
+    { id: "p3s8", t: "Upload fire-safety notes & evacuation plan", o: "A", opt: true, note: "Needs file from the committee." },
+    { id: "p3s9", t: "Switch on the agreed v1 modules", o: "A" },
+  ] },
+  { n: 4, name: "Fuelling", sub: "load the key records", steps: [
+    { id: "p4s1", t: "Upload the by-laws", o: "A", note: "Needs file from the committee." },
+    { id: "p4s2", t: "Upload the insurance certificate of currency", o: "A", note: "Needs file from the committee." },
+    { id: "p4s3", t: "Upload the latest AGM / committee minutes", o: "A", note: "Needs file from the committee." },
+    { id: "p4s4", t: "Upload the current budget", o: "A", opt: true },
+    { id: "p4s5", t: "Add the contracts register", o: "A", opt: true },
+    { id: "p4s6", t: "Add the contractors register", o: "A", opt: true },
+    { id: "p4s7", t: "Add any live maintenance items", o: "A", note: "So the loop is visible from day one." },
+    { id: "p4s8", t: "Draft the welcome announcement, ready to publish", o: "C", opt: true },
+  ] },
+  { n: 5, name: "Comms Channel", sub: "turn on correspondence", steps: [
+    { id: "p5s1", t: "Confirm & copy the building's public address", o: "A" },
+    { id: "p5s2", t: "Tell key external parties the new address", o: "C", note: "Strata, insurer, solicitor, council, contractors." },
+    { id: "p5s3", t: "Test inbound: one real email files into Correspondence", o: "AC" },
+    { id: "p5s4", t: "Test outbound: a notice's reply lands in Correspondence", o: "AC" },
+    { id: "p5s5", t: "Decide if / when to retire the old email relay", o: "B", opt: true, note: "No rush \u2014 keep it until confident." },
+  ] },
+  { n: 6, name: "Crew Ready", sub: "the committee learns & tests", steps: [
+    { id: "p6s1", t: "Run a 30-min committee walkthrough (or the Help hub)", o: "C" },
+    { id: "p6s2", t: "Each committee member does one real action", o: "B", gate: true, note: "Post, comment or log something." },
+    { id: "p6s3", t: "Soft-launch to a few friendly residents for a week", o: "C" },
+    { id: "p6s4", t: "Collect 3\u20135 pieces of feedback", o: "C" },
+    { id: "p6s5", t: "Fix the rough edges from feedback", o: "A" },
+  ] },
+  { n: 7, name: "Manifest", sub: "get residents ready to load", steps: [
+    { id: "p7s1", t: "Confirm authority to load the resident roll, and that residents will be told their details are held in NaloHub", o: "B", note: "Privacy Act / Australian Privacy Principles." },
+    { id: "p7s2", t: "Prepare the resident list (name \u00b7 email \u00b7 unit \u00b7 role)", o: "C" },
+    { id: "p7s3", t: "Load residents into NaloHub", o: "A" },
+    { id: "p7s4", t: "Test an owner and a tenant sign-in", o: "A" },
+    { id: "p7s5", t: "Line up 2\u20133 resident helpers for launch", o: "C" },
+    { id: "p7s6", t: "Draft the resident invite & welcome message", o: "AC" },
+  ] },
+  { n: 8, name: "Cleared for Launch", sub: "the readiness gate", steps: [
+    { id: "p8s1", t: "Committee checks the loaded info is current & correct", o: "B", note: "By-laws, insurance, contacts." },
+    { id: "p8s2", t: "Review readiness against this tracker", o: "C" },
+    { id: "p8s3", t: "Committee confirms: cleared to launch to all residents", o: "B", gate: true, note: "The timing is the committee's call." },
+    { id: "p8s4", t: "Hand over to the Resident Launch plan", o: "C" },
+  ] },
+];
+function OnboardingView() {
+  const { T, building, user, update, flash } = useApp();
+  const [noteOpen, setNoteOpen] = useState({});
+  if (!isCommittee(user.role)) return <div><Head title="Getting Started" /><Wrap><Card style={{ padding: 18 }}><p style={{ color: T.textMuted }} className="text-sm">This screen is for the committee.</p></Card></Wrap></div>;
+  const ob = building.onboarding || { done: {}, na: {}, notes: {} };
+  const setOb = (fn) => update((s) => { const bb = s.buildings.find((x) => x.id === building.id); if (!bb) return; bb.onboarding = bb.onboarding || { done: {}, na: {}, notes: {} }; bb.onboarding.done = bb.onboarding.done || {}; bb.onboarding.na = bb.onboarding.na || {}; bb.onboarding.notes = bb.onboarding.notes || {}; fn(bb.onboarding, bb); });
+  const all = ONBOARD.flatMap((p) => p.steps);
+  const counted = all.filter((st) => !(ob.na || {})[st.id]);
+  const done = counted.filter((st) => (ob.done || {})[st.id]).length;
+  const pct = counted.length ? Math.round((done / counted.length) * 100) : 0;
+  const cleared = !!(ob.done || {})["p8s3"];
+  const toggle = (st) => { if ((ob.na || {})[st.id]) return; const to = !(ob.done || {})[st.id]; setOb((o, bb) => { o.done[st.id] = to; if (st.id === "p8s3") bb.launchedAt = to ? today() : ""; }); if (st.id === "p8s3" && to) flash("\u{1F680} Cleared for launch \u2014 over to the Resident Launch plan."); };
+  const toggleNa = (st) => setOb((o) => { o.na[st.id] = !(o.na || {})[st.id]; if (o.na[st.id]) o.done[st.id] = false; });
+  const copySummary = () => {
+    let out = `NaloHub \u2014 Getting Started\nBuilding: ${building.name}\nAs at: ${today()}\nOverall: ${pct}% ready (${done}/${counted.length} steps)` + (cleared ? " \u2014 CLEARED FOR LAUNCH" : "") + "\n\n";
+    ONBOARD.forEach((p) => { const cs = p.steps.filter((st) => !(ob.na || {})[st.id]); const ds = cs.filter((st) => (ob.done || {})[st.id]).length; out += `Phase ${p.n} \u00b7 ${p.name}: ${ds}/${cs.length}\n`; });
+    const open = all.filter((st) => !(ob.na || {})[st.id] && !(ob.done || {})[st.id]).slice(0, 6);
+    if (open.length) { out += "\nNext up:\n"; open.forEach((st) => { out += `\u2022 ${st.t} (${OB_OWNERS[st.o]})\n`; }); }
+    const noted = all.filter((st) => (ob.notes || {})[st.id]);
+    if (noted.length) { out += "\nNotes:\n"; noted.forEach((st) => { out += `\u2022 ${st.t}: ${ob.notes[st.id]}\n`; }); }
+    try { navigator.clipboard.writeText(out); flash("Progress copied \u2014 paste it to the committee"); } catch (e) { flash("Copy not available here"); }
+  };
+  return (
+    <div>
+      <Head title="Getting Started" sub={`${building.name}'s shared road to launch \u2014 launch timing is always the committee's call`} action={<HeaderAction onClick={copySummary}><Copy size={15} /> Copy progress</HeaderAction>} />
+      <Wrap>
+        <Card style={{ padding: 18, border: cleared ? `1px solid ${hexToRgba(SEMANTIC.ok, 0.5)}` : undefined }}>
+          <div className="flex items-baseline justify-between"><div className="font-bold text-2xl">{pct}%<span style={{ color: T.textMuted }} className="text-sm font-medium"> ready</span></div>
+            <div className="text-xs font-bold uppercase tracking-wider" style={{ color: cleared ? SEMANTIC.ok : T.textMuted }}>{cleared ? "\u2713 Cleared for launch" : pct === 100 ? "Ready \u2014 awaiting sign-off" : "In progress"}</div></div>
+          <div className="h-2.5 rounded-full mt-3 overflow-hidden" style={{ background: hexToRgba(T.accent, 0.13) }}>
+            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${T.accent}, ${T.accent2})` }} />
+          </div>
+          <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 mt-3.5">
+            {ONBOARD.map((p) => { const cs = p.steps.filter((st) => !(ob.na || {})[st.id]); const ds = cs.filter((st) => (ob.done || {})[st.id]).length; const full = cs.length > 0 && ds === cs.length; return (
+              <div key={p.n} className="text-center"><div className="h-1.5 rounded-full" style={{ background: full ? SEMANTIC.ok : ds > 0 ? `linear-gradient(90deg, ${SEMANTIC.ok} 50%, ${hexToRgba(T.accent, 0.13)} 50%)` : hexToRgba(T.accent, 0.13) }} /><div className="text-[9px] mt-1 font-semibold truncate" style={{ color: full ? SEMANTIC.ok : T.textMuted }}>{p.name}</div></div>); })}
+          </div>
+          <p style={{ color: T.textMuted }} className="text-xs mt-3">Tick items as they're done — every committee member sees the same live record. Steps that don't apply here can be marked N/A.</p>
+        </Card>
+        {ONBOARD.map((p) => { const cs = p.steps.filter((st) => !(ob.na || {})[st.id]); const ds = cs.filter((st) => (ob.done || {})[st.id]).length; return (
+          <Card key={p.n} style={{ padding: 18 }}>
+            <SectionTitle right={<span style={{ color: T.textMuted }} className="text-[11px]">{ds}/{cs.length} done</span>}>{p.n}. {p.name} · {p.sub}</SectionTitle>
+            <div className="space-y-2">
+              {p.steps.map((st) => { const isDone = !!(ob.done || {})[st.id]; const isNa = !!(ob.na || {})[st.id]; const note = (ob.notes || {})[st.id] || ""; const showNote = !!note || noteOpen[st.id]; return (
+                <div key={st.id} className="rounded-xl px-3 py-2.5" style={{ background: isDone && !isNa ? hexToRgba(SEMANTIC.ok, 0.08) : T.surfaceAlt, border: `1px solid ${isDone && !isNa ? hexToRgba(SEMANTIC.ok, 0.35) : T.border}`, opacity: isNa ? 0.55 : 1 }}>
+                  <div className="flex items-start gap-3">
+                    <button onClick={() => toggle(st)} aria-label="Mark done" className="h-6 w-6 rounded-md grid place-items-center shrink-0 mt-0.5" style={{ background: isDone && !isNa ? SEMANTIC.ok : "transparent", border: `2px solid ${isDone && !isNa ? SEMANTIC.ok : T.border}`, cursor: isNa ? "not-allowed" : "pointer" }}>{isDone && !isNa && <Check size={14} color="#fff" />}</button>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm" style={{ textDecoration: isNa ? "line-through" : "none" }}>{st.t}{st.gate && <span style={{ color: T.accent }} className="font-bold"> ★</span>}</div>
+                      {st.note && <div style={{ color: T.textMuted }} className="text-[11px] mt-0.5">{st.note}</div>}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: hexToRgba(T.accent, 0.14), color: T.accent }}>{OB_OWNERS[st.o]}</span>
+                        {st.opt && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: hexToRgba(SEMANTIC.warn, 0.15), color: SEMANTIC.warn }}>Optional</span>}
+                        <button onClick={() => toggleNa(st)} className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ border: `1px dashed ${isNa ? SEMANTIC.warn : T.border}`, color: isNa ? SEMANTIC.warn : T.textMuted }}>{isNa ? "N/A \u2713" : "Mark N/A"}</button>
+                        {!showNote && !isNa && <button onClick={() => setNoteOpen({ ...noteOpen, [st.id]: true })} className="text-[10px] font-semibold" style={{ color: T.textMuted, borderBottom: `1px dashed ${T.border}` }}>+ note</button>}
+                      </div>
+                      {showNote && !isNa && <div className="mt-2"><Input value={note} placeholder="Add a note — who's chasing it, a date, a blocker…" onChange={(e) => { const v = e.target.value; setOb((o) => { if (v.trim()) o.notes[st.id] = v; else delete o.notes[st.id]; }); }} /></div>}
+                    </div>
+                  </div>
+                </div>); })}
+            </div>
+          </Card>); })}
+      </Wrap>
+    </div>
+  );
+}
+
 // One-tap export of everything the building owns (Services Agreement cl.4).
 function DataExportCard() {
   const { T, building, buildingId, user, flash } = useApp();
@@ -3501,6 +3750,7 @@ function BuildingInboxCard() {
 function SettingsView() {
   const { T, store, update, building, buildingId, user, flash, backend, platformAdmin } = useApp();
   const canEdit = isCommittee(user.role);
+  const [myCeleb, setMyCeleb] = useState(() => celebPref(user.id));
   const setB = (k, v) => update((s) => { s.buildings.find((b) => b.id === building.id)[k] = v; });
   const [r, setR] = useState({ name: "", unit: "", email: "", phone: "", role: "owner", msc: false });
   const [rbulk, setRbulk] = useState("");
@@ -3537,8 +3787,17 @@ function SettingsView() {
           <div className="space-y-3"><div className="grid sm:grid-cols-2 gap-3"><Field label="Name"><Input value={r.name} onChange={(e) => setR({ ...r, name: e.target.value })} /></Field><Field label="Role"><Select value={r.role} onChange={(e) => setR({ ...r, role: e.target.value })}><option value="owner">Owner</option><option value="tenant">Tenant</option><option value="bcc">Committee (BCC)</option><option value="manager">Building manager</option><option value="strata">Strata manager</option></Select></Field></div><div className="grid sm:grid-cols-2 gap-3"><Field label="Unit (blank for strata / manager)"><Input value={r.unit} onChange={(e) => setR({ ...r, unit: e.target.value })} /></Field><Field label="Phone"><Input value={r.phone} onChange={(e) => setR({ ...r, phone: e.target.value })} placeholder="04xx xxx xxx" /></Field></div><Field label="Email"><Input value={r.email} onChange={(e) => setR({ ...r, email: e.target.value })} /></Field><Toggle label="Also on Maintenance Sub-Committee (MSC)" on={r.msc} onClick={() => setR({ ...r, msc: !r.msc })} small /><Btn grad onClick={addResident}><Plus size={15} /> Add person</Btn>
           <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, marginTop: 4 }}><Field label="Bulk import — name, unit, role, email, phone (one per line)"><TextArea rows={3} value={rbulk} onChange={(e) => setRbulk(e.target.value)} placeholder={"Sandra Pho, 412, owner, sandra@seahaven.com.au, 0400 555 666"} /></Field><div className="mt-2"><Btn kind="soft" onClick={importResidents}><Upload size={15} /> Import residents</Btn></div></div></div>
         </Card>)}
+        {canEdit && (<Card style={{ padding: 18 }}><SectionTitle>Community &amp; celebrations</SectionTitle>
+          <p style={{ color: T.textMuted }} className="text-sm mb-3">How warm NaloHub is with residents — the welcome, badges, "aboard" meter and little thank-yous that help {building.name} feel like home.</p>
+          <div className="grid grid-cols-3 gap-2">{[["full", "Full", "Welcome, badges, meter & celebrations"], ["gentle", "Gentle", "The layer stays; celebrations go quiet"], ["essentials", "Essentials", "Switch the welcome layer off"]].map(([v, l, d]) => { const on = communityMode(building) === v; return (<button key={v} onClick={() => setB("community", v)} className="rounded-xl px-3 py-2.5 text-left" style={{ background: on ? hexToRgba(T.accent, 0.14) : T.surfaceAlt, border: `1.5px solid ${on ? T.accent : T.border}` }}><div className="text-sm font-semibold" style={{ color: on ? T.accent : T.text }}>{l}</div><div style={{ color: T.textMuted }} className="text-[10.5px] mt-0.5 leading-snug">{d}</div></button>); })}</div>
+          {communityMode(building) === "essentials" && <p className="text-xs mt-3 flex items-start gap-1.5" style={{ color: SEMANTIC.warn }}><AlertTriangle size={13} className="mt-0.5 shrink-0" /> Most communities leave this on — the welcome layer is what helps residents actually pick NaloHub up. Worth a conversation before switching it off.</p>}
+        </Card>)}
         {canEdit && (<Card style={{ padding: 18 }}><SectionTitle>Features for this building</SectionTitle><p style={{ color: T.textMuted }} className="text-sm mb-3">Turn modules on or off for residents of {building.name}.</p><div className="space-y-2.5">{OPTIONAL_MODULES.concat("whatsapp").map((k) => { const on = building.modules ? building.modules[k] !== false : true; return (<Toggle key={k} label={MODULE_LABELS[k]} on={on} onClick={() => update((s) => { const b = s.buildings.find((x) => x.id === building.id); b.modules = b.modules || {}; b.modules[k] = !on; })} small />); })}</div></Card>)}
         {platformAdmin && backend && (<Card style={{ padding: 18 }}><SectionTitle>Nalo premium suite</SectionTitle><p style={{ color: T.textMuted }} className="text-sm mb-3">NaloPilot, By-Laws, Compliance Calendar and Dispute Records — switched on for buildings on the Professional plan. Platform admin only.</p><Toggle label={building.premiumSuite === true ? "Enabled for this building" : "Not enabled"} on={building.premiumSuite === true} onClick={() => setB("premiumSuite", building.premiumSuite === true ? false : true)} small /></Card>)}
+        <Card style={{ padding: 18 }}><SectionTitle>Your celebrations</SectionTitle>
+          <p style={{ color: T.textMuted }} className="text-sm mb-3">Your own dial for badges and cheerful messages — entirely up to you.</p>
+          <div className="grid grid-cols-3 gap-2">{[["on", "On"], ["gentle", "Gentle"], ["off", "Off"]].map(([v, l]) => { const on = myCeleb === v; return (<button key={v} onClick={() => { setMyCeleb(v); try { localStorage.setItem(celebKey(user.id), v); } catch (e) {} }} className="rounded-xl px-3 py-2 text-sm font-semibold" style={{ background: on ? hexToRgba(T.accent, 0.14) : T.surfaceAlt, border: `1.5px solid ${on ? T.accent : T.border}`, color: on ? T.accent : T.text }}>{l}</button>); })}</div>
+        </Card>
         <DataExportCard />
         {canEdit && (<Card style={{ padding: 18 }}><SectionTitle>Menu labels</SectionTitle><p style={{ color: T.textMuted }} className="text-sm mb-3">Rename sidebar sections to suit your building (e.g. “Business Directory” → “Support Local”). Leave blank for the default.</p><div className="space-y-3">{RENAMABLE.map((k) => { const def = (NAV.find((n) => n.key === k) || {}).label || k; const cur = (building.labels && building.labels[k]) || ""; return (<Field key={k} label={def}><Input value={cur} placeholder={def} onChange={(e) => update((s) => { const b = s.buildings.find((x) => x.id === building.id); b.labels = { ...(b.labels || {}) }; const v = e.target.value; if (v.trim()) b.labels[k] = v; else delete b.labels[k]; })} /></Field>); })}</div></Card>)}
         {canEdit && (<Card style={{ padding: 18 }}><SectionTitle>WhatsApp group</SectionTitle><div className="space-y-3"><Field label="Group name"><Input value={building.whatsappName || ""} onChange={(e) => update((s) => { s.buildings.find((b) => b.id === building.id).whatsappName = e.target.value; })} placeholder="e.g. SeaHaven Residents" /></Field><Field label="Invite link"><Input value={building.whatsappLink || ""} onChange={(e) => update((s) => { s.buildings.find((b) => b.id === building.id).whatsappLink = e.target.value; })} placeholder="https://chat.whatsapp.com/…" /></Field><p style={{ color: T.textMuted }} className="text-xs">In WhatsApp: open the group → Group info → "Invite to group via link". Paste it here once — residents tap straight through.</p></div></Card>)}
