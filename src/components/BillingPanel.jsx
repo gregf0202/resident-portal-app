@@ -7,6 +7,8 @@ import { downloadInvoicePdf } from "../invoicePdf.js";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const defaults = (tiers) => ({
+  billing_model: "per_apartment", // EITHER "per_apartment" (automated engine) OR "tier" (designer, manual issue)
+  pa_discount_pct: 0, pa_discount_reason: "", pa_discount_until: null,
   tier_id: (tiers[1] || tiers[0] || {}).id || null,
   cycle: "quarterly", term_months: 12,
   cycle_discount_pct: 2, term_discount_pct: 0,
@@ -113,6 +115,23 @@ export default function BillingPanel({ bid, building }) {
       {err && <div style={{ color: "#f87171", fontSize: 13, marginBottom: 8 }}>{err}</div>}
       {msg && <div style={{ color: "#34d399", fontSize: 13, marginBottom: 8 }}>{msg}</div>}
 
+      {/* billing structure — one or the other */}
+      <div style={head}>Billing structure — this building is billed one way or the other</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        {[["per_apartment", "Per apartment — automated engine"], ["tier", "Pricing tier — designer, manual issue"]].map(([v, l]) => (
+          <button key={v} type="button" onClick={() => set("billing_model", v)}
+            style={{ flex: 1, padding: "10px 12px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer",
+              background: (cfg.billing_model || "per_apartment") === v ? T.accent : "transparent", color: (cfg.billing_model || "per_apartment") === v ? "#fff" : T.text,
+              border: `1px solid ${(cfg.billing_model || "per_apartment") === v ? T.accent : T.border}` }}>{l}</button>
+        ))}
+      </div>
+      <div style={{ color: T.textMuted, fontSize: 12, marginBottom: 12 }}>
+        {(cfg.billing_model || "per_apartment") === "per_apartment"
+          ? "The automated engine runs daily at 6am: trial reminders, pro-rata on activation, monthly invoices and charging. Remember to Save billing setup after switching."
+          : "Tier billing is manual: configure below and press Issue on a preview to raise each invoice. The 6am engine does not generate invoices for this building (overdue and late-fee sweeps still run). Remember to Save billing config after switching."}
+      </div>
+
+      {(cfg.billing_model || "per_apartment") === "per_apartment" && (<>
       {/* automated billing engine (Stripe) */}
       <div style={head}>Automated billing — invoices generate & charge themselves daily at 6am</div>
       <div style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 12, padding: 12, marginBottom: 12 }}>
@@ -125,20 +144,36 @@ export default function BillingPanel({ bid, building }) {
           <Field label="Trial ends on"><Input type="date" value={cfg.trial_end || ""} onChange={(e) => set("trial_end", e.target.value || null)} /></Field>
           <Field label="Late payment fee $ (0 = off)"><Input type="number" step="0.01" value={cfg.late_fee_amount ?? 0} onChange={(e) => set("late_fee_amount", Number(e.target.value))} /></Field>
           <Field label="Payment method"><div style={{ fontSize: 13, paddingTop: 8, color: cfg.payment_method_label ? "#34d399" : "#f59e0b" }}>{cfg.payment_method_label || "Not saved — building sets up in Billing"}</div></Field>
+          <Field label="Discount % (0 = none)"><Input type="number" step="0.1" value={cfg.pa_discount_pct ?? 0} onChange={(e) => set("pa_discount_pct", Number(e.target.value))} /></Field>
+          <Field label="Discount reason (shows on invoice)"><Input value={cfg.pa_discount_reason || ""} onChange={(e) => set("pa_discount_reason", e.target.value)} placeholder="e.g. Founding building" /></Field>
+          <Field label="Discount until (blank = ongoing)"><Input type="date" value={cfg.pa_discount_until || ""} onChange={(e) => set("pa_discount_until", e.target.value || null)} /></Field>
+          <Field label="Status"><Select value={cfg.status} onChange={(e) => set("status", e.target.value)}><option value="trial">Trial</option><option value="active">Active</option><option value="paused">Paused</option><option value="cancelled">Cancelled</option></Select></Field>
+          <Field label="Service start"><Input type="date" value={cfg.service_start || ""} onChange={(e) => set("service_start", e.target.value)} /></Field>
+          <Field label="GST mode"><Select value={cfg.gst_mode} onChange={(e) => set("gst_mode", e.target.value)}><option value="plus">Add GST</option><option value="incl">Includes GST</option><option value="none">No GST</option></Select></Field>
+          <Field label="GST rate %"><Input type="number" value={cfg.gst_rate} onChange={(e) => set("gst_rate", e.target.value)} /></Field>
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.textMuted, marginTop: 8 }}>
           <input type="checkbox" checked={cfg.suspend_on_expiry !== false} onChange={(e) => set("suspend_on_expiry", e.target.checked)} />
           Suspend access if the trial ends without a payment method (reminders go to the BCC at 14, 7 and 2 days)
         </label>
-        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>
-          Monthly value: {money((Number(cfg.admin_monthly) || 0) + (Number(cfg.per_unit_monthly) || 0) * (Number(cfg.unit_count) || 0), cfg.currency)} + GST · first bill pro-rata from trial end to the preferred payment day.
-        </div>
+        {(() => {
+          const gross = (Number(cfg.admin_monthly) || 0) + (Number(cfg.per_unit_monthly) || 0) * (Number(cfg.unit_count) || 0);
+          const pct = Number(cfg.pa_discount_pct) || 0;
+          const active = pct > 0 && (!cfg.pa_discount_until || cfg.pa_discount_until >= todayISO());
+          const net = gross * (1 - (active ? Math.min(pct, 100) : 0) / 100);
+          return (
+            <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>
+              Monthly value: {active ? (<><s>{money(gross, cfg.currency)}</s> <b style={{ color: "#34d399" }}>{money(net, cfg.currency)}</b> after {pct}% discount{cfg.pa_discount_until ? ` (until ${au(cfg.pa_discount_until)})` : ""}{cfg.pa_discount_reason ? ` — ${cfg.pa_discount_reason}` : ""}</>) : money(gross, cfg.currency)} + GST · first bill pro-rata from trial end to the preferred payment day.{pct > 0 && !active ? " (Discount expired — remove or extend it.)" : ""}
+            </div>
+          );
+        })()}
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           <Btn onClick={save}>Save billing setup</Btn>
           <Btn kind="ghost" onClick={async () => { const d = prompt("One-off item description (e.g. Feature customisation):"); if (!d) return; const a = prompt("Amount $ (exc GST):"); if (!a) return; try { await createAdhocInvoice(bid, "one_off", d, Number(a)); setInvoices(await loadInvoices(bid)); setMsg("One-off invoice raised."); } catch (e) { setErr(String(e.message || e)); } }}>+ One-off invoice</Btn>
           <Btn kind="ghost" onClick={async () => { const d = prompt("Refund description:"); if (!d) return; const a = prompt("Refund amount $:"); if (!a) return; const orig = prompt("Refund against which paid invoice? (paste invoice id, or leave blank to record only)") || ""; try { if (orig) await stripeRefund(orig, Number(a), d); else await createAdhocInvoice(bid, "refund", d, Number(a)); setInvoices(await loadInvoices(bid)); setMsg("Refund recorded."); } catch (e) { setErr(String(e.message || e)); } }}>− Refund</Btn>
         </div>
       </div>
+      </>)}
 
       {/* business + payment details */}
       <div style={head}>Business &amp; payment details (shown on every invoice)</div>
@@ -160,6 +195,7 @@ export default function BillingPanel({ bid, building }) {
         </div>
       )}
 
+      {(cfg.billing_model || "per_apartment") === "tier" && (<>
       {/* tiers */}
       <div style={head}>Pricing tiers (annual, ex-GST · platform-wide)</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 6 }}>
@@ -209,6 +245,7 @@ export default function BillingPanel({ bid, building }) {
           <div style={{ color: T.textMuted, fontSize: 12, marginTop: 8 }}>GST shown for modelling — confirm tax treatment with your accountant before issuing tax invoices.</div>
         </>
       )}
+      </>)}
 
       {/* invoices */}
       <div style={{ ...head, marginTop: 16 }}>Issued invoices</div>

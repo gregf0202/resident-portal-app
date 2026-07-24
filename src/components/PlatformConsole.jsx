@@ -5,12 +5,38 @@ import AnimatedHeader from "./AnimatedHeader.jsx";
 import { Card, Btn, Field, Input, Select, Badge, Empty } from "./ui.jsx";
 import BillingPanel from "./BillingPanel.jsx";
 import { loadBillingSummary } from "../db.js";
-import { loadAllBuildings, createBuilding, joinAsAdmin, listMembers, addMember, addMembersBulk, updateMember, removeMember, sendInvite, sendInvites } from "../db.js";
+import { loadAllBuildings, createBuilding, joinAsAdmin, listMembers, addMember, addMembersBulk, updateMember, removeMember, sendInvite, sendInvites, loadBillingStatuses, setBuildingReference } from "../db.js";
 import { parseCSV, toCSV, downloadCSV, readFileText } from "../csv.js";
 
 const ROLES = [["bcc", "Committee"], ["admin", "Administrator"], ["manager", "Building manager"], ["strata", "Strata manager"], ["owner", "Owner"], ["tenant", "Tenant"]];
 
 const AU_STATES = ["QLD", "NSW", "VIC", "SA", "WA", "TAS", "NT", "ACT"];
+// ---- building status categories (live vs pilot vs reference vs other) ------
+// Reference = flagged internal/state-reference builds (Ask Nalo, legislation).
+// Paying    = billing status "active". Pilot/Trial = billing status "trial".
+// Other     = paused / cancelled / no billing configured at all.
+const CATS = [
+  ["paying", "Live — paying", "#34d399"],
+  ["trial", "Pilot & trial", "#fbbf24"],
+  ["other", "Other — no billing", "#9fb2c8"],
+  ["reference", "Reference & internal", "#60a5fa"],
+];
+function catOf(b, bb) {
+  if (b.reference) return "reference";
+  if (bb && bb.status === "active") return "paying";
+  if (bb && bb.status === "trial") return "trial";
+  return "other";
+}
+function badgeOf(b, bb) {
+  if (b.reference) return { label: "REFERENCE", color: "#60a5fa" };
+  if (!bb) return { label: "NO BILLING", color: "#9fb2c8" };
+  if (bb.status === "active") return { label: "PAYING · " + (bb.billing_model === "tier" ? "tier" : "per apt") + (Number(bb.pa_discount_pct) > 0 ? " · disc" : ""), color: "#34d399" };
+  if (bb.status === "trial") return { label: "TRIAL" + (bb.trial_end ? " → " + String(bb.trial_end).slice(0, 10).split("-").reverse().join("/") : ""), color: "#fbbf24" };
+  if (bb.status === "paused") return { label: "PAUSED", color: "#f87171" };
+  if (bb.status === "cancelled") return { label: "CANCELLED", color: "#6b7280" };
+  return { label: "NO BILLING", color: "#9fb2c8" };
+}
+
 function groupByState(list) {
   const stateOf = (b) => { const m = String(b.address || "").toUpperCase().match(/\b(QLD|NSW|VIC|SA|WA|TAS|NT|ACT)\b/); return m ? m[1] : "OTHER"; };
   const groups = {};
@@ -79,11 +105,17 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
     setPwMsg("Password saved. Next time, use “Admin? Sign in with a password” on the sign-in screen.");
   };
 
+  const [billingMap, setBillingMap] = useState({});
   const refresh = async () => {
     setLoading(true); setErr("");
     try { setBuildings(await loadAllBuildings(authUser)); }
     catch (e) { setErr(e.message || String(e)); }
+    try { setBillingMap(await loadBillingStatuses()); } catch (e) { /* badges degrade to NO BILLING */ }
     setLoading(false);
+  };
+  const toggleReference = async (b) => {
+    try { await setBuildingReference(b.id, !b.reference); await refresh(); }
+    catch (e) { setErr(e.message || String(e)); }
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, []);
 
@@ -154,29 +186,47 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
         )}
         {loading ? <Empty title="Loading…" hint="Fetching your buildings." />
           : buildings.length === 0 ? <Empty title="No buildings yet" hint="Create your first building above." />
-          : groupByState(buildings.filter((b) => !bq.trim() || b.name.toLowerCase().includes(bq.trim().toLowerCase()))).map(([state, list]) => (
-            <div key={state}>
-              <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: T.textMuted, margin: "16px 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
-                <span>{state}</span><span style={{ flex: 1, borderTop: `1px solid ${T.border}` }} /><span>{list.length}</span>
-              </div>
-              {list.map((b) => (
-            <Card key={b.id} style={{ padding: 16, marginBottom: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 180 }}>
-                  <div style={{ fontWeight: 700, fontSize: 17 }}>{b.name}</div>
-                  <div style={{ color: T.textMuted, fontSize: 13 }}>{b.address || "No address set"}</div>
+          : (() => {
+            const filtered = buildings.filter((b) => !bq.trim() || b.name.toLowerCase().includes(bq.trim().toLowerCase()));
+            return CATS.map(([key, label, color]) => {
+              const inCat = filtered.filter((b) => catOf(b, billingMap[b.id]) === key);
+              if (!inCat.length) return null;
+              return (
+                <div key={key}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "24px 0 4px" }}>
+                    <span style={{ height: 10, width: 10, borderRadius: 99, background: color, boxShadow: `0 0 8px ${color}` }} />
+                    <span style={{ fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: 700, color }}>{label}</span>
+                    <span style={{ flex: 1, borderTop: `1px solid ${T.border}` }} />
+                    <span style={{ color: T.textMuted, fontSize: 12 }}>{inCat.length}</span>
+                  </div>
+                  {groupByState(inCat).map(([state, list]) => (
+                    <div key={state}>
+                      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: T.textMuted, margin: "10px 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>{state}</span><span style={{ flex: 1 }} /><span>{list.length}</span>
+                      </div>
+                      {list.map((b) => { const bg = badgeOf(b, billingMap[b.id]); return (
+                        <Card key={b.id} style={{ padding: 16, marginBottom: 12, borderLeft: `3px solid ${bg.color}` }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                            <div style={{ flex: 1, minWidth: 180 }}>
+                              <div style={{ fontWeight: 700, fontSize: 17, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>{b.name} <Badge color={bg.color}>{bg.label}</Badge></div>
+                              <div style={{ color: T.textMuted, fontSize: 13 }}>{b.address || "No address set"}</div>
+                            </div>
+                            <Badge color={T.accent}>{b.members} member{b.members === 1 ? "" : "s"}</Badge>
+                            <Btn kind="ghost" title="Reference buildings sit outside billing — internal builds for Ask Nalo / state legislation" onClick={() => toggleReference(b)} style={{ padding: "6px 10px", fontSize: 12 }}>{b.reference ? "Unmark reference" : "Mark reference"}</Btn>
+                            <Btn kind="ghost" onClick={() => setManaging(managing === b.id ? null : b.id)}>Members</Btn>
+                            <Btn kind="ghost" onClick={() => setBillingFor(billingFor === b.id ? null : b.id)}>Billing</Btn>
+                            <Btn onClick={() => open(b)}>{b.isMember ? "Open" : "Join & open"}</Btn>
+                          </div>
+                          {managing === b.id && <MembersPanel bid={b.id} onChanged={refresh} />}
+                          {billingFor === b.id && <BillingPanel bid={b.id} building={{ name: b.name, address: b.address }} />}
+                        </Card>
+                      ); })}
+                    </div>
+                  ))}
                 </div>
-                <Badge color={T.accent}>{b.members} member{b.members === 1 ? "" : "s"}</Badge>
-                <Btn kind="ghost" onClick={() => setManaging(managing === b.id ? null : b.id)}>Members</Btn>
-                <Btn kind="ghost" onClick={() => setBillingFor(billingFor === b.id ? null : b.id)}>Billing</Btn>
-                <Btn onClick={() => open(b)}>{b.isMember ? "Open" : "Join & open"}</Btn>
-              </div>
-              {managing === b.id && <MembersPanel bid={b.id} onChanged={refresh} />}
-              {billingFor === b.id && <BillingPanel bid={b.id} building={{ name: b.name, address: b.address }} />}
-            </Card>
-              ))}
-            </div>
-          ))}
+              );
+            });
+          })()}
       </div>
     </div>
   );
