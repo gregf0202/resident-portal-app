@@ -12,7 +12,7 @@ import {
   Briefcase, HardHat, ClipboardList,
 } from "lucide-react";
 import { parseCSV, toCSV, downloadCSV, readFileText } from "./csv.js";
-import { Document as DocxDocument, Packer as DocxPacker, Paragraph as DocxP, TextRun as DocxT, HeadingLevel as DocxH, ImageRun as DocxImg } from "docx";
+import { Document as DocxDocument, Packer as DocxPacker, Paragraph as DocxP, TextRun as DocxT, HeadingLevel as DocxH, ImageRun as DocxImg, Table as DocxTable, TableRow as DocxTR, TableCell as DocxTC, WidthType as DocxW, ShadingType as DocxSh, BorderStyle as DocxB } from "docx";
 import GuidedTour from "./components/GuidedTour.jsx";
 import { audit, searchLegislation, loadDisputes, createDispute, appendDisputeEvent, setDisputeStatus, verifyDisputeChain, uploadAttachment, attachmentUrl,
   unitHealthCheck, listUnits, createUnit, addUnitPerson, addUnitPet, addUnitVehicle, addAccessItem, updateAccessItemStatus, addUnitBreach,
@@ -3164,6 +3164,103 @@ function ActionRegister() {
 }
 
 // ---------- reports (BCC) ---------------------------------------------------
+// ---------- NaloHub-branded Maintenance Report (Word) ------------------------
+// Pure builders: assembled data in → docx children out. Card-per-issue layout
+// with status chips, at-a-glance stats and colour-coded sections. Palette
+// mirrors the NaloHub brand; tested against docx 8.5.0.
+const RPT = {
+  navy: "0A2030", blue: "0D7FC6", teal: "06B6C7", ink: "1A2733", muted: "56697E",
+  light: "EEF4F9", line: "C9D6E2", green: "1F7A4C", greenBg: "E8F5EE",
+  amber: "B45309", amberBg: "FDF3E7", W: 9000,
+};
+const RPT_STATUS = {
+  new: ["New", "6B7480", "EEF0F3"], triaged: ["Triaged", "B45309", "FDF3E7"],
+  in_progress: ["In progress", "1D6FB8", "E7F1FA"], resolved: ["Resolved", "1F7A4C", "E8F5EE"],
+};
+const rptNoB = () => ({ style: DocxB.NONE, size: 0, color: "FFFFFF" });
+const rptB = (color, size) => ({ style: DocxB.SINGLE, size: size || 4, color: color || RPT.line });
+const rptT = (p) => new DocxT({ size: 20, color: RPT.ink, ...(typeof p === "string" ? { text: p } : p) });
+const rptP = (parts, o = {}) => new DocxP({ spacing: { after: o.after != null ? o.after : 60, line: o.line || 264, before: o.before || 0 }, alignment: o.align, border: o.border, indent: o.indent, children: (Array.isArray(parts) ? parts : [parts]).map(rptT) });
+const rptCell = (kids, o = {}) => new DocxTC({
+  width: { size: o.w || RPT.W, type: DocxW.DXA }, columnSpan: o.span,
+  shading: o.fill ? { type: DocxSh.CLEAR, fill: o.fill } : undefined,
+  margins: { top: o.tm != null ? o.tm : 80, bottom: o.bm != null ? o.bm : 60, left: 140, right: 140 },
+  borders: o.borders, verticalAlign: "center", children: kids,
+});
+const rptB64ToU8 = (b64) => { const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return u8; };
+const rptImage = (dataUrl) => {
+  try {
+    const m = /^data:image\/(png|jpe?g|gif|bmp);base64,(.+)$/i.exec(String(dataUrl || ""));
+    if (!m) return null;
+    const type = m[1].toLowerCase().startsWith("j") ? "jpg" : m[1].toLowerCase();
+    return new DocxImg({ type, data: rptB64ToU8(m[2]), transformation: { width: 250, height: 188 } });
+  } catch (e) { return null; }
+};
+const rptSec = (label, lines, color) => {
+  const out = [rptP([{ text: label, bold: true, size: 16, color: color || RPT.blue, characterSpacing: 20 }], { after: 30, before: 60 })];
+  lines.forEach((l) => out.push(rptP(Array.isArray(l) ? l : [l], { after: 24, indent: { left: 160 } })));
+  return out;
+};
+function rptIssueCard(it) {
+  const st = RPT_STATUS[it.statusKey] || RPT_STATUS.new;
+  const stLabel = st[0], stColor = st[1], stBg = st[2];
+  const body = [];
+  if (it.description) body.push(...rptSec("DESCRIPTION", [it.description]));
+  if (it.updates && it.updates.length) body.push(...rptSec("PROGRESS UPDATES", it.updates.map((u) => [{ text: u.date + "  ", color: RPT.muted, size: 18 }, { text: u.text }, { text: "  — " + u.by, color: RPT.muted, size: 18 }])));
+  if (it.quotes && it.quotes.length) body.push(...rptSec("QUOTES", it.quotes.map((q) => [{ text: q.supplier, bold: true }, { text: q.amount ? "  " + q.amount : "" }, { text: q.tag ? "   " + q.tag : "", bold: q.tag === "ACCEPTED", color: q.tag === "ACCEPTED" ? RPT.green : RPT.muted, size: 18 }, { text: q.note ? "   " + q.note : "", color: RPT.muted, size: 18 }])));
+  if (it.works && it.works.length) body.push(...rptSec("APPROVED WORKS / SUPPLIERS", it.works.map((w) => [{ text: w.head, bold: true }, { text: w.cost ? "  " + w.cost : "", color: RPT.green, bold: true }, { text: w.meta ? "   " + w.meta : "", color: RPT.muted, size: 18 }])));
+  if (it.decisions && it.decisions.length) body.push(...rptSec("COMMITTEE DECISION", it.decisions.map((d) => [{ text: d.outcome + "  ", bold: true, color: d.passed ? RPT.green : RPT.amber }, { text: d.text }]), RPT.green));
+  if (it.trail && it.trail.length) body.push(...rptSec("WORKFLOW TRAIL", it.trail.map((a) => [{ text: a.date + "  ", color: RPT.muted, size: 18 }, { text: a.kind, bold: true, size: 18, color: RPT.muted }, { text: a.body ? " — " + a.body : "", size: 18, color: RPT.muted }])));
+  if (it.history) body.push(...rptSec("STATUS HISTORY", [[{ text: it.history, size: 18, color: RPT.muted }]], RPT.muted));
+  const rows = [
+    new DocxTR({ children: [
+      rptCell([rptP([{ text: it.title, bold: true, size: 24 }, { text: "   " + it.category, color: RPT.muted, size: 18 }, it.historical ? { text: "   HISTORICAL RECORD", size: 14, bold: true, color: RPT.muted, characterSpacing: 20 } : { text: "" }], { after: 0 })], { w: 6800, fill: RPT.light, borders: { top: rptB(stColor, 12), bottom: rptB(), left: rptB(stColor, 12), right: rptNoB() } }),
+      rptCell([rptP([{ text: stLabel.toUpperCase(), bold: true, size: 18, color: stColor, characterSpacing: 20 }], { after: it.ageText ? 20 : 0, align: "right" }), ...(it.ageText ? [rptP([{ text: it.ageText, size: 16, color: RPT.muted }], { after: 0, align: "right" })] : [])], { w: 2200, fill: stBg, borders: { top: rptB(stColor, 12), bottom: rptB(), left: rptNoB(), right: rptB(stColor, 12) } }),
+    ] }),
+    new DocxTR({ children: [rptCell([rptP([{ text: it.metaText, size: 18, color: RPT.muted }], { after: 0 })], { span: 2, tm: 50, bm: 40, borders: { top: rptNoB(), bottom: body.length || it.image ? { style: DocxB.DASHED, size: 4, color: RPT.line } : rptNoB(), left: rptB(), right: rptB() } })] }),
+  ];
+  if (body.length || it.image) {
+    const kids = [...body];
+    if (it.image) { kids.push(rptP([{ text: "PHOTO", bold: true, size: 16, color: RPT.blue, characterSpacing: 20 }], { after: 30, before: 60 })); kids.push(new DocxP({ spacing: { after: 40 }, indent: { left: 160 }, children: [it.image] })); }
+    rows.push(new DocxTR({ children: [rptCell(kids, { span: 2, borders: { top: rptNoB(), bottom: rptB(), left: rptB(), right: rptB() } })] }));
+  }
+  return new DocxTable({ width: { size: RPT.W, type: DocxW.DXA }, columnWidths: [6800, 2200], borders: { top: rptNoB(), bottom: rptNoB(), left: rptNoB(), right: rptNoB(), insideHorizontal: rptNoB(), insideVertical: rptNoB() }, rows });
+}
+function rptBuildKids(d) {
+  const kids = [];
+  kids.push(rptP([{ text: "N A L O H U B", bold: true, color: RPT.teal, size: 20, characterSpacing: 40 }], { after: 120 }));
+  kids.push(rptP([{ text: "Maintenance Report", bold: true, size: 52, color: RPT.navy }], { after: 60 }));
+  kids.push(rptP([{ text: d.buildingName, bold: true, size: 26, color: RPT.blue }], { after: 40 }));
+  kids.push(rptP([{ text: d.periodText, size: 20, color: RPT.muted }], { after: 140, border: { bottom: { style: DocxB.SINGLE, size: 12, color: RPT.teal, space: 6 } } }));
+  const stat = (label, value, color) => rptCell([
+    rptP([{ text: String(value), bold: true, size: 34, color: color || RPT.ink }], { after: 10, align: "center" }),
+    rptP([{ text: label.toUpperCase(), size: 14, color: RPT.muted, characterSpacing: 20 }], { after: 0, align: "center" }),
+  ], { w: 1800, fill: RPT.light, borders: { top: rptB(), bottom: rptB(), left: rptB(), right: rptB() }, tm: 110, bm: 90 });
+  kids.push(new DocxTable({ width: { size: RPT.W, type: DocxW.DXA }, columnWidths: [1800, 1800, 1800, 1800, 1800], borders: { top: rptB(), bottom: rptB(), left: rptB(), right: rptB(), insideHorizontal: rptB(), insideVertical: rptB() }, rows: [
+    new DocxTR({ children: [
+      stat("In this report", d.stats.total),
+      stat("Newly reported", d.stats.reported, RPT.blue),
+      stat("Resolved in period", d.stats.resolved, RPT.green),
+      stat("Open now", d.stats.open, d.stats.open > 0 ? RPT.amber : RPT.green),
+      stat("Avg days to resolve", d.stats.avg != null ? d.stats.avg : "—", RPT.blue),
+    ] }),
+  ] }));
+  kids.push(rptP([{ text: d.catLine, size: 18, color: RPT.muted }], { before: 80, after: 160 }));
+  const section = (label, color, bg, items) => {
+    if (!items.length) return;
+    kids.push(new DocxTable({ width: { size: RPT.W, type: DocxW.DXA }, columnWidths: [RPT.W], borders: { top: rptNoB(), bottom: rptNoB(), left: rptNoB(), right: rptNoB(), insideHorizontal: rptNoB(), insideVertical: rptNoB() }, rows: [
+      new DocxTR({ children: [rptCell([rptP([{ text: label.toUpperCase(), bold: true, size: 20, color, characterSpacing: 30 }, { text: "   " + items.length + " issue" + (items.length === 1 ? "" : "s"), size: 18, color: RPT.muted }], { after: 0 })], { fill: bg, borders: { top: rptNoB(), bottom: rptNoB(), left: { style: DocxB.SINGLE, size: 22, color }, right: rptNoB() }, tm: 90, bm: 70 })] }),
+    ] }));
+    kids.push(rptP([{ text: "", size: 8 }], { after: 60 }));
+    items.forEach((it) => { kids.push(rptIssueCard(it)); kids.push(rptP([{ text: "", size: 8 }], { after: 90 })); });
+  };
+  section("Open issues — for the committee's attention", RPT.amber, RPT.amberBg, d.openItems);
+  section("Resolved", RPT.green, RPT.greenBg, d.resolvedItems);
+  kids.push(rptP([{ text: "Prepared from the NaloHub maintenance register and workflow audit trail — every entry is backed by the in-app trail (who, what, when). Suitable for tabling in committee meeting minutes.", italics: true, size: 18, color: RPT.muted }], { before: 120, border: { top: { style: DocxB.SINGLE, size: 4, color: RPT.line, space: 6 } } }));
+  kids.push(rptP([{ text: "Be in the Nalo 🌊  ·  portal.nalohub.com", size: 16, color: RPT.teal }], { after: 0 }));
+  return kids;
+}
+
 function Reports() {
   const { T, store, building, buildingId, flash } = useApp();
   const maint = store.maintenance.filter((m) => m.buildingId === buildingId);
@@ -3187,44 +3284,49 @@ function Reports() {
       if (!rows.length) { flash("No maintenance issues in that period"); setMr((x) => ({ ...x, busy: false })); return; }
       let appMotions = []; try { appMotions = (await listMotions(buildingId)).filter((mo) => mo.context_type === "maintenance"); } catch (e) { /* motions unavailable — report still builds */ }
       const motByIssue = {}; appMotions.forEach((mo) => { (motByIssue[mo.context_id] = motByIssue[mo.context_id] || []).push(mo); });
-      const kids = [];
-      const H = (t, lvl) => kids.push(new DocxP({ heading: lvl, children: [new DocxT(t)] }));
-      const Pn = (parts) => kids.push(new DocxP({ children: parts.map((p) => new DocxT(p)) }));
-      const line = (label, text) => Pn([{ text: label + ": ", bold: true }, { text }]);
-      H("MAINTENANCE REPORT — " + building.name, DocxH.HEADING_1);
-      Pn([{ text: `Period: ${mr.from ? fmtDate(mr.from) : "all history"} to ${fmtDate(mr.to || today())} · Generated ${fmtDate(today())} · Prepared for the Body Corporate Committee`, italics: true }]);
       const openRows = rows.filter((m) => m.status !== "resolved");
       const resolvedRows = rows.filter((m) => m.status === "resolved");
       const resolvedIn = resolvedRows.filter((m) => dOf(m.resolvedAt) >= from && dOf(m.resolvedAt) <= to);
       const reportedIn = rows.filter((m) => dOf(m.reportedAt || m.date) >= from);
       const solved = resolvedIn.filter((m) => daysToResolve(m) != null);
       const avg = solved.length ? Math.round(solved.reduce((a, m) => a + daysToResolve(m), 0) / solved.length) : null;
-      H("Summary", DocxH.HEADING_2);
-      Pn([{ text: `${rows.length} issue(s) in this report · ${reportedIn.length} newly reported in the period · ${resolvedIn.length} resolved in the period · ${openRows.length} currently open${avg != null ? ` · average ${avg} day(s) to resolve` : ""}` }]);
       const cats = {}; rows.forEach((m) => { cats[m.category] = (cats[m.category] || 0) + 1; });
-      Pn([{ text: "By category: " + Object.keys(cats).map((k) => `${k} ${cats[k]}`).join(" · ") }]);
-      const issueBlock = async (m) => {
-        H(`${m.title} (${m.category})`, DocxH.HEADING_3);
-        line("Status", `${M_STATUS[m.status].label}${m.status === "resolved" ? (daysToResolve(m) != null ? ` — resolved in ${daysToResolve(m)} day(s), on ${fmtDate(dOf(m.resolvedAt))}` : "") : ` — ${daysOpen(m)} day(s) open`}${m.historical ? " · historical record" : ""}`);
-        line("Reported", `${fmtDate(dOf(m.reportedAt || m.date))} by ${m.raisedBy || "—"}${m.location ? " · " + m.location : ""}${m.triageOwner ? " · assigned to " + m.triageOwner : ""}`);
-        if (m.description) line("Description", m.description);
-        if ((m.updates || []).length) { Pn([{ text: "Progress updates:", bold: true }]); (m.updates || []).forEach((u) => Pn([{ text: `    ${fmtDate(u.date)} — ${u.text} (${u.by})` }])); }
+      // assemble each issue into the card shape the branded builder expects
+      const toItem = async (m) => {
         let wq = []; try { wq = await listMaintQuotes(buildingId, m.id); } catch (e) { /* no workflow quotes */ }
-        const qLines = [
-          ...(m.quotes || []).map((q) => `${q.supplier || "—"}${q.amount ? " · " + q.amount : ""}${q.accepted ? " · ACCEPTED" : ""}${q.note ? " — " + q.note : ""}`),
-          ...(wq || []).map((q) => `${q.supplier_name}${q.amount ? " · $" + Number(q.amount).toLocaleString() : ""} · ${q.status}`),
-        ];
-        if (qLines.length) { Pn([{ text: "Quotes:", bold: true }]); qLines.forEach((t) => Pn([{ text: "    " + t }])); }
-        if ((m.resolutions || []).length) { Pn([{ text: "Approved works / suppliers:", bold: true }]); m.resolutions.forEach((r) => Pn([{ text: `    ${[r.supplier, r.note].filter(Boolean).join(" — ")}${r.cost ? " (" + r.cost + ")" : ""} · recorded by ${r.by} ${fmtDate(r.date)}` }])); }
         let trail = []; try { trail = await listMaintActivity(buildingId, m.id); } catch (e) { /* no trail */ }
-        if ((trail || []).length) { Pn([{ text: "Workflow trail:", bold: true }]); trail.forEach((a) => Pn([{ text: `    ${fmtDate(dOf(a.created_at))} — ${String(a.kind || "").replace(/_/g, " ")}${a.body ? ": " + a.body : ""}` }])); }
-        (motByIssue[m.id] || []).forEach((mo) => Pn([{ text: "Committee decision: ", bold: true }, { text: `${mo.title} — ${String(mo.status || "").toUpperCase()}${mo.outcome_note ? " (" + mo.outcome_note + ")" : ""}${mo.decided_at ? " · decided " + fmtDate(dOf(mo.decided_at)) : ""}` }]));
-        if ((m.statusHistory || []).length > 1) Pn([{ text: "Status history: ", bold: true }, { text: (m.statusHistory || []).map((h) => `${h.from ? (M_STATUS[h.from] ? M_STATUS[h.from].label : h.from) : "Reported"} → ${M_STATUS[h.to] ? M_STATUS[h.to].label : h.to} · ${fmtDate(dOf(h.at))} · ${h.by}`).join("; ") }]);
+        const dtr = daysToResolve(m);
+        return {
+          title: m.title || m.id, category: m.category || "", statusKey: m.status, historical: !!m.historical,
+          ageText: m.status === "resolved" ? (dtr != null ? `resolved in ${dtr} day${dtr === 1 ? "" : "s"}` : "") : `${daysOpen(m)} day${daysOpen(m) === 1 ? "" : "s"} open`,
+          metaText: `Reported ${fmtDate(dOf(m.reportedAt || m.date))} by ${m.raisedBy || "—"}${m.location ? "  ·  " + m.location : ""}${m.triageOwner ? "  ·  Assigned to " + m.triageOwner : ""}${m.status === "resolved" && m.resolvedAt ? "  ·  Resolved " + fmtDate(dOf(m.resolvedAt)) : ""}`,
+          description: m.description || "",
+          image: rptImage(m.image),
+          updates: (m.updates || []).map((u) => ({ date: fmtDate(u.date), text: u.text, by: u.by })),
+          quotes: [
+            ...(m.quotes || []).map((q) => ({ supplier: q.supplier || "—", amount: q.amount || "", tag: q.accepted ? "ACCEPTED" : "", note: q.note || "" })),
+            ...(wq || []).map((q) => ({ supplier: q.supplier_name, amount: q.amount ? "$" + Number(q.amount).toLocaleString() : "", tag: q.status === "accepted" ? "ACCEPTED" : (q.status || ""), note: "" })),
+          ],
+          works: (m.resolutions || []).map((r) => ({ head: [r.supplier, r.note].filter(Boolean).join(" — ") || "—", cost: r.cost || "", meta: `recorded by ${r.by} ${fmtDate(r.date)}` })),
+          decisions: (motByIssue[m.id] || []).map((mo) => ({
+            outcome: mo.status === "passed" ? "PASSED" : mo.status === "failed" ? "FAILED" : mo.status === "withdrawn" ? "WITHDRAWN" : "AT VOTE",
+            passed: mo.status === "passed",
+            text: `${mo.title}${mo.outcome_note ? " — " + mo.outcome_note : ""}${mo.decided_at ? " · decided " + fmtDate(dOf(mo.decided_at)) : ""}`,
+          })),
+          trail: (trail || []).map((a) => ({ date: fmtDate(dOf(a.created_at)), kind: String(a.kind || "").replace(/_/g, " "), body: a.body || "" })),
+          history: (m.statusHistory || []).length > 1 ? (m.statusHistory || []).map((h) => `${h.from ? (M_STATUS[h.from] ? M_STATUS[h.from].label : h.from) : "Reported"} → ${M_STATUS[h.to] ? M_STATUS[h.to].label : h.to} (${fmtDate(dOf(h.at))}, ${h.by})`).join("; ") : "",
+        };
       };
-      if (openRows.length) { H("Open issues — for the committee's attention", DocxH.HEADING_2); for (const m of openRows) await issueBlock(m); }
-      if (resolvedRows.length) { H("Resolved issues", DocxH.HEADING_2); for (const m of resolvedRows) await issueBlock(m); }
-      Pn([{ text: "Prepared from the NaloHub maintenance register and workflow audit trail — every entry above is backed by the in-app trail (who, what, when). Suitable for tabling in committee meeting minutes.", italics: true }]);
-      const doc = new DocxDocument({ sections: [{ children: kids }], styles: { default: { document: { run: { font: "Calibri", size: 22 } } } } });
+      const openItems = []; for (const m of openRows) openItems.push(await toItem(m));
+      const resolvedItems = []; for (const m of resolvedRows) resolvedItems.push(await toItem(m));
+      const kids = rptBuildKids({
+        buildingName: building.name,
+        periodText: `Period: ${mr.from ? fmtDate(mr.from) : "all history"} – ${fmtDate(mr.to || today())}  ·  Generated ${fmtDate(today())}  ·  Prepared for the Body Corporate Committee`,
+        stats: { total: rows.length, reported: reportedIn.length, resolved: resolvedIn.length, open: openRows.length, avg },
+        catLine: "By category:  " + Object.keys(cats).map((k) => `${k} ${cats[k]}`).join("  ·  "),
+        openItems, resolvedItems,
+      });
+      const doc = new DocxDocument({ styles: { default: { document: { run: { font: "Calibri", size: 20, color: RPT.ink } } } }, sections: [{ properties: { page: { margin: { top: 1000, bottom: 1000, left: 1100, right: 1100 } } }, children: kids }] });
       const blob = await DocxPacker.toBlob(doc);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
