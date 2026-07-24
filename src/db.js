@@ -86,7 +86,26 @@ export async function loadAllBuildings(authUser) {
   return (bs || []).map((b) => ({
     id: b.id, name: (b.data && b.data.name) || "(unnamed)",
     address: (b.data && b.data.address) || "", members: counts[b.id] || 0, isMember: !!mine[b.id],
+    reference: !!(b.data && b.data.reference), // internal / state-reference building — never billed
   })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Platform console: billing state per building, for the live/pilot/reference cues.
+export async function loadBillingStatuses() {
+  const { data, error } = await supabase.from("building_billing")
+    .select("building_id, status, billing_model, trial_end, payment_method_label, pa_discount_pct");
+  if (error) throw error;
+  const map = {};
+  (data || []).forEach((r) => { map[r.building_id] = r; });
+  return map;
+}
+
+// Flag/unflag a building as a reference/internal build (stored on buildings.data).
+export async function setBuildingReference(bid, on) {
+  const { data: row, error } = await supabase.from("buildings").select("id, data").eq("id", bid).single();
+  if (error) throw error;
+  const { error: e2 } = await supabase.from("buildings").update({ data: { ...(row.data || {}), reference: !!on } }).eq("id", bid);
+  if (e2) throw e2;
 }
 
 export async function createBuilding(fields, authUser) {
