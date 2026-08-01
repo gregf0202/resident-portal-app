@@ -180,6 +180,25 @@ Netlify then builds both sites (`npm run build` → `dist`) and publishes in ~1�
 
 - Project **NaloHub (prod):** ref `lipwcsihcxndwwgzhiia`, region `ap-southeast-2`.
 - Migrations applied to prod live in `supabase/migrations/`.
+- **`documents_meta` view + `documents_preserve_file` trigger (migration 0005, APPLIED to prod
+  1 Aug 2026).** `loadBuildingStore` now reads documents through `documents_meta`
+  (`data - 'fileData'`, `security_invoker = true`, so the RLS on `documents` still governs who
+  sees which row) — **opening a building never downloads file bytes.** `getDocumentFile(id)` in
+  `db.js` fetches a single document's payload on demand when someone clicks it; the Documents
+  screen and `FileChip` await it and show a "fetching…" state. Because `persistChange` upserts
+  whole records, a BEFORE UPDATE trigger re-attaches `fileData` whenever an update omits it, so
+  a metadata-only client can never blank a stored file (verified by test).
+  Built because Curve Birtinya's 43 MB of base64 PDFs made that building effectively unopenable —
+  see `INCIDENT_2026-08-01_CURVE_LOAD.md`. `document_blobs` is the temporary parking table from
+  that incident; **migration 0006 restores those payloads and should be run once this frontend is
+  deployed**, after which `document_blobs` can be dropped.
+- **`gallery_meta` view + `gallery_preserve_image` trigger (migration 0007, APPLIED to prod
+  1 Aug 2026).** Identical treatment for gallery photos, which are base64 data-URLs under
+  `gallery.data.image` — a single Curve photo is 598 KB. The building load now carries captions,
+  categories and dates only (`gallery_meta` is 230 bytes vs 598 KB for the table); the Gallery
+  screen calls `getGalleryImages(buildingId)` on mount, one request for the whole building, and
+  renders through a `src(g)` helper that prefers an image already in hand. Same preserve trigger,
+  because editing a caption would otherwise write the photo away.
 - Edge functions in `supabase/functions/` (Deno): `send-correspondence` (Resend send,
   `verify_jwt=true`), `receive-correspondence` (inbound webhook), `maintenance-reminders`,
   **`send-announcement`** (emails an announcement to the residents it targets, resolving
@@ -216,6 +235,19 @@ Netlify then builds both sites (`npm run build` → `dist`) and publishes in ~1�
   verify: copy `src/`, `index.html`, `package.json`, `vite.config.js`, `public/` to a temp
   dir, `npm install`, then `VITE_DEMO_MODE=true npm run build`. Or a quick parse check with
   a standalone `esbuild.transformSync(code, { loader: "jsx" })`.
+- **Never `select id, data` a content table that can hold base64 payloads.** `documents`,
+  `gallery` and `buildings` all store files as data-URLs inside JSONB. One 20 MB scanned PDF in a
+  building's documents adds ~20 s to that building's load *for every user, every visit* — and the
+  failure mode is a silent bounce back to Your Buildings, not an error, so it doesn't look like a
+  bug. Fetch metadata on load and file bytes on demand: `documents` goes through `documents_meta`
+  + `getDocumentFile()` and `gallery` through `gallery_meta` + `getGalleryImages()` (§8).
+  **`buildings.data.logoImage` is the last one left** (244 KB base64 PNG on Curve, `buildings`
+  20 MB overall) — deliberately deferred, since it's one row per building and it's needed at
+  first paint. Any *new* content table that can hold a data-URL must get the same treatment:
+  add it to `HEAVY_TABLES` in `db.js` and give it a `_meta` view + preserve trigger.
+- **Anything loaded metadata-only must be protected at the DB level**, because `persistChange`
+  writes whole records back. See the `documents_preserve_file` trigger — without it, clicking
+  Release on a document would have silently erased the file.
 - **Role checks belong in the view**, not the router (see §5).
 - **JSX attribute strings do NOT interpret backslash escapes.** `sell="\u201C…"` renders the literal
   characters `\u201C`, not a curly quote (the backslash even looks like `|` in the app font). Use the

@@ -23,7 +23,7 @@ import { audit, searchLegislation, loadDisputes, createDispute, appendDisputeEve
   listWalkItems, seedWalkDefaults, listWalks, createWalk, listWalkResults, setWalkResult, completeWalk,
   listNotifications, markNotificationRead, markAllNotificationsRead, listMotionComments, addMotionComment,
   addWalkItem, removeWalkItem, setWalkResultPhoto, setWalkResultMaint, mediaBlob, updateUnitAgent, updateMotionConditions, DEMO_UID, exportBuildingData,
-  loadMyBuildingBilling, startPaymentSetup,
+  loadMyBuildingBilling, startPaymentSetup, getDocumentFile, getGalleryImages,
   listCorrThreads, getCorrThread, listCorrContacts, saveCorrContact, sendCorrespondence, sendAnnouncementEmail, ensureBuildingMailbox, updateCorrThread, setCorrThreadMembers, corrAttachmentUrl, listCorrUnfiled, fileCorrUnfiled } from "./db.js";
 import { supabase } from "./supabaseClient.js";
 
@@ -283,14 +283,27 @@ function ImagePick({ value, onChange, label = "Add image" }) {
   return value ? (<div className="relative rounded-xl overflow-hidden"><img src={value} alt="" className="w-full h-40 object-cover" /><button onClick={() => onChange("")} className="absolute top-2 right-2 bg-black/55 text-white rounded-lg p-1.5"><X size={15} /></button></div>)
     : (<label style={{ borderColor: T.border, color: T.textMuted }} className="flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-5 text-sm cursor-pointer"><ImageIcon size={17} /> {label}<input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) readImage(f, onChange); }} /></label>);
 }
-function FileChip({ name, data, path, color }) {
+// `docId` lets a chip point at a documents row whose file bytes were not
+// loaded with the building — the payload is fetched only when clicked.
+function FileChip({ name, data, path, color, docId }) {
   const { T, flash } = useApp();
+  const [busy, setBusy] = useState(false);
   const c = color || T.accent;
-  const open = () => {
+  const send = (d) => { const a = document.createElement("a"); a.href = d; a.download = name; a.click(); };
+  const open = async () => {
+    if (busy) return;
     if (path) { attachmentUrl(path).then((url) => window.open(url, "_blank")).catch(() => flash("Couldn't open the file — try again")); return; }
-    if (data) { const a = document.createElement("a"); a.href = data; a.download = name; a.click(); } else flash(`Opening ${name}`);
+    if (data) { send(data); return; }
+    if (docId) {
+      setBusy(true);
+      try { const d = await getDocumentFile(docId); if (d) { send(d); return; } flash("No file attached to this record"); }
+      catch (e) { flash("Couldn't fetch the file — try again"); }
+      finally { setBusy(false); }
+      return;
+    }
+    flash(`Opening ${name}`);
   };
-  return <button onClick={open} style={{ background: hexToRgba(c, T.mode === "dark" ? 0.2 : 0.12), color: c }} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1.5"><Paperclip size={12} /> {name} <Download size={12} /></button>;
+  return <button onClick={open} disabled={busy} style={{ background: hexToRgba(c, T.mode === "dark" ? 0.2 : 0.12), color: c, opacity: busy ? 0.6 : 1 }} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1.5"><Paperclip size={12} /> {name} {busy ? <span className="text-[11px]">fetching…</span> : <Download size={12} />}</button>;
 }
 export function Toast() { const { toast } = useApp(); if (!toast) return null; return <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] px-4"><div className="bg-slate-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2"><Mail size={15} /> {toast}</div></div>; }
 
@@ -3460,24 +3473,35 @@ function Gallery() {
   const [light, setLight] = useState(null);
   const [f, setF] = useState({ caption: "", category: GALLERY_CATEGORIES[0], image: "" });
   const [slide, setSlide] = useState(0);
+  // Photos are NOT carried in the building load — the store holds captions and
+  // categories only. Fetch the actual images once, when this screen opens.
+  // `src(g)` prefers an image already in hand (a photo just uploaded in this
+  // session) and falls back to the fetched map.
+  const [imgs, setImgs] = useState({});
+  useEffect(() => {
+    let live = true;
+    getGalleryImages(buildingId).then((m) => { if (live) setImgs(m || {}); }).catch(() => {});
+    return () => { live = false; };
+  }, [buildingId]);
+  const src = (g) => (g ? (g.image || imgs[g.id] || "") : "");
   const recent = list.slice(0, 10);
   useEffect(() => { if (recent.length < 2) return; const id = setInterval(() => setSlide((s) => (s + 1) % recent.length), 3500); return () => clearInterval(id); }, [recent.length]);
   useEffect(() => { const t = setTimeout(() => update((s) => { const u = s.users.find((x) => x.id === user.id); if (u) u.lastSeenGallery = nowISO(); }), 1200); return () => clearTimeout(t); }, []);
   const add = () => { if (!f.image && !f.caption.trim()) return; update((s) => s.gallery.unshift({ id: "g" + Math.random().toString(36).slice(2, 6), buildingId, caption: f.caption.trim() || "Untitled", category: f.category, color: T.accent, image: f.image, postedBy: user.name, createdAt: nowISO() })); setF({ caption: "", category: GALLERY_CATEGORIES[0], image: "" }); setAdding(false); flash("Photo added to the gallery"); };
   const filtered = cat === "All" ? list : list.filter((g) => g.category === cat);
   const cur = recent[slide];
-  const save = (g) => { if (!g.image) { flash("Sample tile — upload photos to save"); return; } const a = document.createElement("a"); a.href = g.image; a.download = (g.caption || "photo") + ".png"; a.click(); };
+  const save = (g) => { const d = src(g); if (!d) { flash("Sample tile — upload photos to save"); return; } const a = document.createElement("a"); a.href = d; a.download = (g.caption || "photo") + ".png"; a.click(); };
   return (
     <div>
       <Head title="Gallery" sub="Photos from the community" action={<HeaderAction onClick={() => setAdding(true)}><Plus size={16} /> Add photo</HeaderAction>} />
       <Wrap>
         {newCount > 0 && <Card style={{ padding: 14, background: hexToRgba(T.accent, T.mode === "dark" ? 0.16 : 0.1), border: `1px solid ${hexToRgba(T.accent, 0.3)}` }}><div className="flex items-center gap-2 text-sm font-medium"><Sparkles size={16} style={{ color: T.accent }} /> {newCount} new photo{newCount > 1 ? "s" : ""} since you last looked</div></Card>}
         {adding && (<Card style={{ padding: 18 }}><div className="space-y-3"><Field label="Photo"><ImagePick value={f.image} onChange={(v) => setF({ ...f, image: v })} /></Field><div className="grid sm:grid-cols-2 gap-3"><Field label="Caption"><Input value={f.caption} onChange={(e) => setF({ ...f, caption: e.target.value })} placeholder="Name this photo" /></Field><Field label="Category"><Select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{GALLERY_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</Select></Field></div><div className="flex gap-2"><Btn grad onClick={add}>Add photo</Btn><Btn kind="ghost" onClick={() => setAdding(false)}>Cancel</Btn></div></div></Card>)}
-        {recent.length > 0 && cur && (<button onClick={() => setLight(cur)} className="relative rounded-2xl overflow-hidden block w-full" style={{ height: 220, border: `1px solid ${T.border}` }}>{cur.image ? <img src={cur.image} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center" style={{ background: `linear-gradient(135deg, ${cur.color}, ${hexToRgba(cur.color, 0.55)})` }}><ImageIcon className="text-white/70" size={32} /></div>}<div className="absolute inset-x-0 bottom-0 p-4 text-white text-left" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)" }}><div className="font-semibold">{cur.caption}</div><div className="text-xs text-white/80">{cur.category} · {cur.postedBy}</div></div><div className="absolute bottom-3 right-3 flex gap-1.5">{recent.map((_, i) => <span key={i} className="h-1.5 rounded-full transition-all" style={{ width: i === slide ? 16 : 6, background: i === slide ? "#fff" : "rgba(255,255,255,0.5)" }} />)}</div></button>)}
+        {recent.length > 0 && cur && (<button onClick={() => setLight(cur)} className="relative rounded-2xl overflow-hidden block w-full" style={{ height: 220, border: `1px solid ${T.border}` }}>{src(cur) ? <img src={src(cur)} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center" style={{ background: `linear-gradient(135deg, ${cur.color}, ${hexToRgba(cur.color, 0.55)})` }}><ImageIcon className="text-white/70" size={32} /></div>}<div className="absolute inset-x-0 bottom-0 p-4 text-white text-left" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)" }}><div className="font-semibold">{cur.caption}</div><div className="text-xs text-white/80">{cur.category} · {cur.postedBy}</div></div><div className="absolute bottom-3 right-3 flex gap-1.5">{recent.map((_, i) => <span key={i} className="h-1.5 rounded-full transition-all" style={{ width: i === slide ? 16 : 6, background: i === slide ? "#fff" : "rgba(255,255,255,0.5)" }} />)}</div></button>)}
         <div className="flex gap-2 flex-wrap">{["All", ...GALLERY_CATEGORIES].map((c) => { const on = cat === c; return <button key={c} onClick={() => setCat(c)} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: on ? T.accent : T.surface, color: on ? T.accentText : T.textMuted, border: `1px solid ${on ? "transparent" : T.border}` }}>{c}</button>; })}</div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{filtered.map((g) => (<button key={g.id} onClick={() => setLight(g)} className="text-left"><div className="rounded-2xl overflow-hidden aspect-square">{g.image ? <img src={g.image} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center" style={{ background: `linear-gradient(135deg, ${g.color}, ${hexToRgba(g.color, 0.6)})` }}><ImageIcon className="text-white/70" /></div>}</div><div className="text-sm mt-1.5 font-medium">{g.caption}</div><div style={{ color: T.textMuted }} className="text-xs">{g.category} · {g.postedBy}</div></button>))}</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{filtered.map((g) => (<button key={g.id} onClick={() => setLight(g)} className="text-left"><div className="rounded-2xl overflow-hidden aspect-square">{src(g) ? <img src={src(g)} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center" style={{ background: `linear-gradient(135deg, ${g.color}, ${hexToRgba(g.color, 0.6)})` }}><ImageIcon className="text-white/70" /></div>}</div><div className="text-sm mt-1.5 font-medium">{g.caption}</div><div style={{ color: T.textMuted }} className="text-xs">{g.category} · {g.postedBy}</div></button>))}</div>
       </Wrap>
-      {light && (<div className="fixed inset-0 z-[80] grid place-items-center p-5" onClick={() => setLight(null)}><div className="absolute inset-0 bg-black/80" /><div className="relative max-w-lg w-full" onClick={(e) => e.stopPropagation()}><button onClick={() => setLight(null)} className="absolute -top-10 right-0 text-white/80 p-1"><X size={24} /></button>{light.image ? <img src={light.image} alt="" className="w-full rounded-2xl" /> : <div className="w-full aspect-video grid place-items-center rounded-2xl" style={{ background: `linear-gradient(135deg, ${light.color}, ${hexToRgba(light.color, 0.6)})` }}><ImageIcon className="text-white/70" size={40} /></div>}<div className="flex items-center justify-between mt-3 text-white"><div><div className="font-semibold">{light.caption}</div><div className="text-xs text-white/70">{light.category} · {light.postedBy}</div></div><button onClick={() => save(light)} className="bg-white/15 hover:bg-white/25 text-white text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5"><Download size={16} /> Save</button></div></div></div>)}
+      {light && (<div className="fixed inset-0 z-[80] grid place-items-center p-5" onClick={() => setLight(null)}><div className="absolute inset-0 bg-black/80" /><div className="relative max-w-lg w-full" onClick={(e) => e.stopPropagation()}><button onClick={() => setLight(null)} className="absolute -top-10 right-0 text-white/80 p-1"><X size={24} /></button>{src(light) ? <img src={src(light)} alt="" className="w-full rounded-2xl" /> : <div className="w-full aspect-video grid place-items-center rounded-2xl" style={{ background: `linear-gradient(135deg, ${light.color}, ${hexToRgba(light.color, 0.6)})` }}><ImageIcon className="text-white/70" size={40} /></div>}<div className="flex items-center justify-between mt-3 text-white"><div><div className="font-semibold">{light.caption}</div><div className="text-xs text-white/70">{light.category} · {light.postedBy}</div></div><button onClick={() => save(light)} className="bg-white/15 hover:bg-white/25 text-white text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5"><Download size={16} /> Save</button></div></div></div>)}
     </div>
   );
 }
@@ -3639,7 +3663,22 @@ function Documents() {
   const [f, setF] = useState({ title: "", category: DOC_CATEGORIES[0], visibility: "all", fileType: "", fileName: "", fileData: "" });
   const release = (id) => { update((s) => { const d = s.documents.find((x) => x.id === id); d.released = true; if (d.visibility === "committee") d.visibility = "owners"; }); flash("Document released"); };
   const upload = () => { if (!f.fileName || !f.category) return; update((s) => s.documents.unshift({ id: "d" + Math.random().toString(36).slice(2, 6), buildingId, title: f.title.trim() || f.fileName.replace(/\.[^.]+$/, ""), category: f.category, visibility: f.visibility, released: f.visibility !== "committee", uploadedBy: user.name, date: today(), fileType: f.fileType, fileData: f.fileData })); setF({ title: "", category: DOC_CATEGORIES[0], visibility: "all", fileType: "", fileName: "", fileData: "" }); setAdding(false); flash("Document filed"); };
-  const openDoc = (d) => { if (d.fileData) { const a = document.createElement("a"); a.href = d.fileData; a.download = d.title + "." + (d.fileType || "file").toLowerCase(); a.click(); } else flash(`Opening ${d.title}`); };
+  // File bytes are not loaded with the building — fetch this document's
+  // payload on demand. Access is re-checked server-side by the row's RLS.
+  const [fetching, setFetching] = useState(null);
+  const openDoc = async (d) => {
+    if (fetching) return;
+    let payload = d.fileData;
+    if (!payload) {
+      setFetching(d.id);
+      try { payload = await getDocumentFile(d.id); }
+      catch (e) { payload = null; flash("Couldn't fetch the file — try again"); setFetching(null); return; }
+      setFetching(null);
+    }
+    if (!payload) { flash(`No file attached to ${d.title}`); return; }
+    const a = document.createElement("a");
+    a.href = payload; a.download = d.title + "." + (d.fileType || "file").toLowerCase(); a.click();
+  };
   const cats = [...new Set(visible.map((d) => d.category))];
   return (
     <div>
@@ -3652,7 +3691,7 @@ function Documents() {
           <div className="flex gap-2"><Btn grad onClick={upload}>File document</Btn><Btn kind="ghost" onClick={() => setAdding(false)}>Cancel</Btn></div>
         </div></Card>)}
         {cats.length === 0 && <Empty icon={FolderOpen} title="No documents yet" hint={canManage ? "Upload your first record." : "Documents will appear here once released."} />}
-        {cats.map((cat) => (<div key={cat}><SectionTitle><span className="inline-flex items-center gap-1.5"><FolderOpen size={13} /> {cat}</span></SectionTitle>{visible.filter((d) => d.category === cat).map((d) => (<button key={d.id} onClick={() => openDoc(d)} className="w-full text-left"><Card hover style={{ padding: 14, marginBottom: 8 }}><div className="flex items-center gap-3"><div className="h-10 w-10 rounded-xl grid place-items-center shrink-0" style={{ background: hexToRgba(T.accent, T.mode === "dark" ? 0.2 : 0.12), color: T.accent }}><FileText size={18} /></div><div className="flex-1 min-w-0"><div className="font-semibold text-sm truncate">{d.title}</div><div style={{ color: T.textMuted }} className="text-[11px] flex flex-wrap gap-x-2">{d.fileType && <span>{d.fileType}</span>}<span>Filed {fmtDate(d.date)} · {d.uploadedBy}</span></div>{!d.released && <div style={{ color: SEMANTIC.warn }} className="text-[11px] flex items-center gap-1 mt-0.5"><Lock size={10} /> Committee only — not yet released</div>}</div>{canManage && !d.released ? <Btn grad onClick={(e) => { e.stopPropagation(); release(d.id); }} className="!px-3 !py-1.5 !text-xs">Release</Btn> : <Download size={16} style={{ color: T.textMuted }} />}</div></Card></button>))}</div>))}
+        {cats.map((cat) => (<div key={cat}><SectionTitle><span className="inline-flex items-center gap-1.5"><FolderOpen size={13} /> {cat}</span></SectionTitle>{visible.filter((d) => d.category === cat).map((d) => (<button key={d.id} onClick={() => openDoc(d)} className="w-full text-left"><Card hover style={{ padding: 14, marginBottom: 8 }}><div className="flex items-center gap-3"><div className="h-10 w-10 rounded-xl grid place-items-center shrink-0" style={{ background: hexToRgba(T.accent, T.mode === "dark" ? 0.2 : 0.12), color: T.accent }}><FileText size={18} /></div><div className="flex-1 min-w-0"><div className="font-semibold text-sm truncate">{d.title}</div><div style={{ color: T.textMuted }} className="text-[11px] flex flex-wrap gap-x-2">{d.fileType && <span>{d.fileType}</span>}<span>Filed {fmtDate(d.date)} · {d.uploadedBy}</span></div>{!d.released && <div style={{ color: SEMANTIC.warn }} className="text-[11px] flex items-center gap-1 mt-0.5"><Lock size={10} /> Committee only — not yet released</div>}</div>{canManage && !d.released ? <Btn grad onClick={(e) => { e.stopPropagation(); release(d.id); }} className="!px-3 !py-1.5 !text-xs">Release</Btn> : fetching === d.id ? <span style={{ color: T.textMuted }} className="text-[11px] font-semibold shrink-0">fetching…</span> : <Download size={16} style={{ color: T.textMuted }} />}</div></Card></button>))}</div>))}
       </Wrap>
     </div>
   );
@@ -3692,7 +3731,7 @@ function Meetings() {
         </div>
         {m.teamsLink && <div className="mt-4"><Btn grad onClick={() => openExternal(m.teamsLink)}><Video size={16} /> Join via Teams</Btn></div>}
         {m.note && <p style={{ color: T.textMuted }} className="text-sm mt-4">{m.note}</p>}
-        {m.minutes && <div className="mt-4"><div style={{ color: T.textMuted }} className="text-[11px] uppercase tracking-wider font-bold mb-2">Minutes</div>{md ? <FileChip name={md.title} data={md.fileData} color={T.accent} /> : <Badge color={T.textMuted}>{m.minutes}</Badge>}</div>}
+        {m.minutes && <div className="mt-4"><div style={{ color: T.textMuted }} className="text-[11px] uppercase tracking-wider font-bold mb-2">Minutes</div>{md ? <FileChip name={md.title} data={md.fileData} docId={md.id} color={T.accent} /> : <Badge color={T.textMuted}>{m.minutes}</Badge>}</div>}
         <div className="mt-5" style={{ borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
           <div className="flex gap-4 text-sm mb-3" style={{ color: T.textMuted }}><span><b style={{ color: SEMANTIC.ok }}>{m.going.length}</b> attending</span><span><b style={{ color: SEMANTIC.warn }}>{m.apologies.length}</b> apologies</span></div>
           <div style={{ color: T.textMuted }} className="text-[11px] uppercase tracking-wider font-bold mb-2">Your response</div>

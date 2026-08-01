@@ -6,6 +6,21 @@ export const CONTENT = [
   "bylaws", "compliance",
 ];
 
+// Content tables whose `data` JSONB can hold multi-MB base64 payloads.
+// Opening a building must NEVER download file bytes: we read a metadata-only
+// view (`data - 'fileData'`) instead of the table, and fetch the bytes for a
+// single record on demand when someone actually asks for the file.
+//
+// Why this exists: Curve Birtinya held 43 MB of base64 PDFs in documents.data,
+// so `documents?select=id,data` added ~20 s to every building open and the app
+// silently fell back to Your Buildings on slower connections.
+// See supabase/migrations/0005_documents_lazy_files.sql and
+// INCIDENT_2026-08-01_CURVE_LOAD.md.
+const HEAVY_TABLES = {
+  documents: { view: "documents_meta", fileKey: "fileData" },
+  gallery: { view: "gallery_meta", fileKey: "image" },
+};
+
 // ---- audit trail --------------------------------------------------------
 // Insert-only activity log. The DB stamps actor (auth.uid()) and created_at
 // itself, so callers only say what happened. Fire-and-forget: an audit
@@ -67,13 +82,44 @@ export async function loadBuildingStore(bid, authUser) {
 
   const store = { buildings: [building], users };
   for (const t of CONTENT) {
-    const { data, error } = await supabase.from(t).select("id, data").eq("building_id", bid);
+    // Heavy tables are read through their metadata view so file bytes stay on
+    // the server until requested (see HEAVY_TABLES above).
+    const source = HEAVY_TABLES[t] ? HEAVY_TABLES[t].view : t;
+    const { data, error } = await supabase.from(source).select("id, data").eq("building_id", bid);
     if (error) throw error;
     store[t] = (data || []).map((r) => ({ id: r.id, ...(r.data || {}) }));
   }
   store.disputes = await loadDisputes(bid);
   const me2 = users.find((u) => u.authId === authUser.id) || users[0];
   return { store, buildingId: bid, currentUserId: me2 ? me2.id : null };
+}
+
+// Fetch one document's file bytes on demand (the base64 data-URL kept out of
+// the building load). Reads the real `documents` table, so the row's RLS
+// policy decides whether the caller may have it — the visibility/released
+// rules the Documents screen applies are unchanged and still enforced
+// server-side. Returns null when the document has no file attached.
+export async function getDocumentFile(docId) {
+  if (!docId) return null;
+  const { data, error } = await supabase.from("documents")
+    .select("fileData:data->>fileData").eq("id", docId).maybeSingle();
+  if (error) throw error;
+  return (data && data.fileData) || null;
+}
+
+// Gallery photos, same deal: the building load carries captions/categories
+// only, and the Gallery screen asks for the actual images when it opens.
+// One request for the building rather than one per tile — a gallery is
+// browsed all at once, so per-tile fetching would just be chattier.
+// Returns { [galleryId]: dataUrl }. RLS on `gallery` still applies.
+export async function getGalleryImages(bid) {
+  if (!bid) return {};
+  const { data, error } = await supabase.from("gallery")
+    .select("id, image:data->>image").eq("building_id", bid);
+  if (error) throw error;
+  const out = {};
+  (data || []).forEach((r) => { if (r.image) out[r.id] = r.image; });
+  return out;
 }
 
 // ---- platform admin: list every building ----
@@ -230,6 +276,11 @@ export async function persistChange(prev, next, bid) {
     for (const rec of next[t] || []) {
       if (!before[rec.id] || diff(before[rec.id], rec)) {
         const { id, ...data } = rec;
+        // NOTE: records from HEAVY_TABLES arrive here without their file bytes
+        // (the store only ever held metadata), so this upsert writes `data`
+        // with no `fileData` key. A BEFORE UPDATE trigger on `documents`
+        // re-attaches the existing payload, so editing a document — e.g.
+        // Release — can never blank the file. Migration 0005.
         jobs.push(supabase.from(t).upsert({ id, building_id: bid, data }));
         audits.push([t + (before[rec.id] ? ".updated" : ".created"), rec.title || rec.name || rec.id]);
       }
@@ -1158,6 +1209,11 @@ if (DEMO_MODE) {
     const by = (arr) => arr.filter((r) => r.unit_id === u.id);
     return { unit: u, people: by(DS.people), residents_directory: [], pets: by(DS.pets), vehicles: by(DS.vehicles), access_items: by(DS.access), breaches: by(DS.breaches), disputes: [], applications: DS.applications.filter((a) => a.unit_id === u.id) };
   };
+  // Demo documents carry their (tiny) fileData inline in the seeded store, so
+  // the lazy path is never needed — returning null makes the UI fall back to
+  // the data it already has.
+  getDocumentFile = async () => null;
+  getGalleryImages = async () => ({});
   listUnits = async () => DS.units;
   createUnit = async (_b, unit_number, lot_number, parking_spaces) => { DS.units.push({ id: id(), unit_number, lot_number, parking_spaces: Number(parking_spaces) || 0 }); };
   addUnitPerson = async (_b, unitId, row) => { DS.people.push({ id: id(), unit_id: unitId, is_current: true, ...row }); };
