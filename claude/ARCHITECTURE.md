@@ -248,6 +248,19 @@ Netlify then builds both sites (`npm run build` → `dist`) and publishes in ~1�
 - **Anything loaded metadata-only must be protected at the DB level**, because `persistChange`
   writes whole records back. See the `documents_preserve_file` trigger — without it, clicking
   Release on a document would have silently erased the file.
+- **Upload limits live in `ResidentPortal.jsx` (`MAX_UPLOAD_MB` = 5).** Two different rules,
+  because they solve different problems: **images are resized and re-encoded, never rejected**
+  (`compressImage` → 1600 px max, JPEG q0.82; logos 512 px, PNG, alpha preserved), while
+  **everything else is hard-capped at 5 MB**, since the browser can't compress a PDF. Use
+  `readUpload(file, cb, flash)` for any file input and `readImage(file, cb, flash, opts)` for
+  image-only ones — `readUpload` routes images through the compressor automatically. Both fall
+  back to the original data-URL if re-encoding would make the file *bigger* (a real case: flat-
+  colour PNG logos). Measured on live Curve data: gallery photo 584 KB → 71 KB (8.2×), building
+  logo 238 KB → 34 KB (7×), both purely from PNG → JPEG at unchanged dimensions; a 12 MP phone
+  photo loses a further ~6× to the 1600 px resize. Rationale for 5 MB: base64-in-JSONB inflates
+  by 33%, so at a 5 MB average roughly 58 buildings fit the 8 GB Pro plan — at 10 MB it'd be ~11.
+  The oversize message tells the uploader to re-scan at 150 DPI greyscale, which is the actual
+  fix for the 20 MB scans that caused the 1 Aug incident.
 - **Role checks belong in the view**, not the router (see §5).
 - **JSX attribute strings do NOT interpret backslash escapes.** `sell="\u201C…"` renders the literal
   characters `\u201C`, not a curly quote (the backslash even looks like `|` in the app font). Use the

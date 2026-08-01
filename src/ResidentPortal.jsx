@@ -257,7 +257,69 @@ const seed = makeDemo();
 // ---------- context ---------------------------------------------------------
 export const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
-const readImage = (file, cb) => { const r = new FileReader(); r.onload = () => cb(r.result); r.readAsDataURL(file); };
+// ---------- uploads: compress images, cap everything else -------------------
+// Files are stored as base64 data-URLs inside JSONB, which inflates them by
+// ~33%, so what goes in here directly determines how much database a building
+// consumes. A 20 MB scanned PDF once made Curve Birtinya unopenable — see
+// INCIDENT_2026-08-01_CURVE_LOAD.md. Two rules:
+//   • Images are RESIZED AND RE-ENCODED, never capped — a 4 MB phone photo
+//     becomes ~300 KB, and nothing the app renders is bigger than ~512px.
+//   • Anything else (PDFs, Word, etc.) is hard-capped, because the browser
+//     can't meaningfully compress it.
+const MAX_UPLOAD_MB = 5;
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+const MAX_SOURCE_IMAGE_BYTES = 40 * 1024 * 1024; // guards browser memory only
+const IMG_MAX_DIM = 1600;   // lightbox renders ~512px; 1600 leaves room to zoom
+const IMG_QUALITY = 0.82;
+const LOGO_MAX_DIM = 512;
+
+const fmtMB = (b) => (b / 1048576).toFixed(1) + " MB";
+const oversizeHelp = (file) =>
+  `"${file.name}" is ${fmtMB(file.size)} — the limit is ${MAX_UPLOAD_MB} MB. If it's a scan, re-scan at 150 DPI in greyscale (that usually brings a document under 2 MB). Otherwise split it into parts and upload them separately.`;
+
+// Draw through a canvas at a sane size. Falls back to the original data-URL if
+// anything goes wrong, so an upload never silently fails.
+const compressImage = (file, cb, onError, opts = {}) => {
+  const { maxDim = IMG_MAX_DIM, quality = IMG_QUALITY, keepAlpha = false } = opts;
+  if (file.size > MAX_SOURCE_IMAGE_BYTES) { if (onError) onError(`"${file.name}" is ${fmtMB(file.size)}, which is too large to process in the browser. Please resize it first.`); return; }
+  const r = new FileReader();
+  r.onerror = () => { if (onError) onError("Couldn't read that file — please try again."); };
+  r.onload = () => {
+    const img = new Image();
+    img.onerror = () => cb(r.result);
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        // JPEG has no alpha channel — flatten onto white so transparent PNGs
+        // don't come out with black backgrounds.
+        if (!keepAlpha) { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h); }
+        ctx.drawImage(img, 0, 0, w, h);
+        const out = canvas.toDataURL(keepAlpha ? "image/png" : "image/jpeg", quality);
+        cb(out && out.length < r.result.length ? out : r.result);
+      } catch (e) { cb(r.result); }
+    };
+    img.src = r.result;
+  };
+  r.readAsDataURL(file);
+};
+
+// Images only (logos, gallery, photo fields).
+const readImage = (file, cb, onError, opts) => compressImage(file, cb, onError, opts);
+
+// Any file: images are compressed, everything else must fit the cap.
+const readUpload = (file, cb, onError) => {
+  if (/^image\//i.test(file.type || "")) { compressImage(file, cb, onError); return; }
+  if (file.size > MAX_UPLOAD_BYTES) { if (onError) onError(oversizeHelp(file)); return; }
+  const r = new FileReader();
+  r.onerror = () => { if (onError) onError("Couldn't read that file — please try again."); };
+  r.onload = () => cb(r.result);
+  r.readAsDataURL(file);
+};
 
 // ---------- UI kit ----------------------------------------------------------
 function Card({ children, style, hover, ...p }) {
@@ -279,9 +341,9 @@ function Badge({ children, color }) { const { T } = useApp(); const c = color ||
 function SectionTitle({ children, right }) { const { T } = useApp(); return <div className="flex items-center justify-between mb-3"><div style={{ color: T.textMuted }} className="text-[11px] uppercase tracking-[0.18em] font-bold">{children}</div>{right}</div>; }
 function Empty({ icon: Icon, title, hint }) { const { T } = useApp(); return <Card style={{ padding: 40 }}><div className="text-center"><Icon size={26} style={{ color: T.textMuted }} className="mx-auto mb-3" /><div className="font-semibold">{title}</div>{hint && <div style={{ color: T.textMuted }} className="text-sm mt-1">{hint}</div>}</div></Card>; }
 function ImagePick({ value, onChange, label = "Add image" }) {
-  const { T } = useApp();
+  const { T, flash } = useApp();
   return value ? (<div className="relative rounded-xl overflow-hidden"><img src={value} alt="" className="w-full h-40 object-cover" /><button onClick={() => onChange("")} className="absolute top-2 right-2 bg-black/55 text-white rounded-lg p-1.5"><X size={15} /></button></div>)
-    : (<label style={{ borderColor: T.border, color: T.textMuted }} className="flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-5 text-sm cursor-pointer"><ImageIcon size={17} /> {label}<input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) readImage(f, onChange); }} /></label>);
+    : (<label style={{ borderColor: T.border, color: T.textMuted }} className="flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-5 text-sm cursor-pointer"><ImageIcon size={17} /> {label}<input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) readImage(f, onChange, flash); }} /></label>);
 }
 // `docId` lets a chip point at a documents row whose file bytes were not
 // loaded with the building — the payload is fetched only when clicked.
@@ -544,7 +606,7 @@ function SetupWizard({ onClose }) {
       <div className="max-w-2xl mx-auto px-5 py-6 space-y-5">
         <Card style={{ padding: 20 }}><SectionTitle>Identity</SectionTitle><div className="space-y-4">
           <Field label="Building name"><Input value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. SeaHaven" /></Field>
-          <Field label="Logo"><div className="flex items-center gap-3">{f.logoImage ? <img src={f.logoImage} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl grid place-items-center font-black" style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, color: T.accentText }}>{(f.logoText || f.name || "B").slice(0, 2).toUpperCase()}</div>}<label style={{ borderColor: T.border, color: T.text }} className="border rounded-xl px-3 py-2 text-sm cursor-pointer inline-flex items-center gap-2"><Upload size={15} /> Upload image<input type="file" accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readImage(file, (d) => set("logoImage", d)); }} /></label>{f.logoImage && <button onClick={() => set("logoImage", "")} style={{ color: T.textMuted }} className="text-xs underline">Use initials</button>}</div></Field>
+          <Field label="Logo"><div className="flex items-center gap-3">{f.logoImage ? <img src={f.logoImage} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl grid place-items-center font-black" style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, color: T.accentText }}>{(f.logoText || f.name || "B").slice(0, 2).toUpperCase()}</div>}<label style={{ borderColor: T.border, color: T.text }} className="border rounded-xl px-3 py-2 text-sm cursor-pointer inline-flex items-center gap-2"><Upload size={15} /> Upload image<input type="file" accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readImage(file, (d) => set("logoImage", d), undefined, { maxDim: LOGO_MAX_DIM, keepAlpha: true }); }} /></label>{f.logoImage && <button onClick={() => set("logoImage", "")} style={{ color: T.textMuted }} className="text-xs underline">Use initials</button>}</div></Field>
           <div className="grid grid-cols-2 gap-3"><Field label="Type"><Input value={f.type} onChange={(e) => set("type", e.target.value)} /></Field><Field label="Initials (fallback)"><Input value={f.logoText} onChange={(e) => set("logoText", e.target.value.toUpperCase().slice(0, 3))} placeholder="SK" /></Field></div>
           <Field label="Address"><Input value={f.address} onChange={(e) => set("address", e.target.value)} placeholder="Street, suburb, state" /></Field>
           <Field label="Scheme / plan reference"><Input value={f.schemeRef} onChange={(e) => set("schemeRef", e.target.value)} placeholder="e.g. CTS 12345 (QLD) · SP 45678 (NSW) · OC/PS (VIC)" /></Field>
@@ -2619,7 +2681,7 @@ function VotingLive() {
           <Field label="Motion"><Input value={nf.title} onChange={(e) => setNf({ ...nf, title: e.target.value })} placeholder="e.g. Accept CoastClean quote for lobby deep clean — $850" /></Field>
           <Field label="Background (optional)"><Input value={nf.description} onChange={(e) => setNf({ ...nf, description: e.target.value })} /></Field>
           <Field label="Supporting documents (optional) — quotes, reports, plans, any file type">
-            <label style={{ borderColor: T.border, color: T.textMuted }} className="flex items-center gap-2 border-2 border-dashed rounded-xl py-3 px-3 text-sm cursor-pointer"><Paperclip size={15} /> Attach documents<input type="file" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []); files.forEach((file) => readImage(file, (data) => setNf((p) => ({ ...p, attachments: [...(p.attachments || []), { name: file.name, type: file.type, data }] })))); e.target.value = ""; }} /></label>
+            <label style={{ borderColor: T.border, color: T.textMuted }} className="flex items-center gap-2 border-2 border-dashed rounded-xl py-3 px-3 text-sm cursor-pointer"><Paperclip size={15} /> Attach documents<input type="file" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []); files.forEach((file) => readUpload(file, (data) => setNf((p) => ({ ...p, attachments: [...(p.attachments || []), { name: file.name, type: file.type, data }] })), flash)); e.target.value = ""; }} /></label>
             {(nf.attachments || []).length > 0 && <div className="flex flex-wrap gap-2 mt-2">{nf.attachments.map((a, i) => (<span key={i} className="text-xs px-2 py-1 rounded-lg inline-flex items-center gap-1.5" style={{ background: T.surfaceAlt, border: `1px solid ${T.border}` }}><Paperclip size={11} /> {a.name}<button type="button" onClick={() => setNf((p) => ({ ...p, attachments: p.attachments.filter((_, j) => j !== i) }))} style={{ color: SEMANTIC.bad }}><X size={11} /></button></span>))}</div>}
           </Field>
           <div className="text-xs" style={{ color: T.textMuted }}>Every BCC member is alerted, and any documents you attach stay with the motion. It passes with a majority of all BCC members and executes automatically.</div>
@@ -3685,7 +3747,7 @@ function Documents() {
       <Head title="Documents" sub={canManage ? "The committee's record of activity & source of truth" : "Building documents available to you"} action={canManage && <HeaderAction onClick={() => setAdding(true)}><Upload size={16} /> Upload</HeaderAction>} />
       <Wrap>
         {adding && (<Card style={{ padding: 18 }}><div className="space-y-3">
-          <Field label="File (any type)"><label style={{ borderColor: f.fileName ? T.accent : T.border, color: f.fileName ? T.text : T.textMuted }} className="flex items-center gap-2 border-2 border-dashed rounded-xl py-4 px-3 text-sm cursor-pointer"><Upload size={16} /> {f.fileName || "Choose a file to upload"}<input type="file" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readImage(file, (d) => setF((p) => ({ ...p, fileName: file.name, fileType: (file.name.split(".").pop() || "").toUpperCase(), fileData: d }))); }} /></label></Field>
+          <Field label="File (any type)"><label style={{ borderColor: f.fileName ? T.accent : T.border, color: f.fileName ? T.text : T.textMuted }} className="flex items-center gap-2 border-2 border-dashed rounded-xl py-4 px-3 text-sm cursor-pointer"><Upload size={16} /> {f.fileName || "Choose a file to upload"}<input type="file" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readUpload(file, (d) => setF((p) => ({ ...p, fileName: file.name, fileType: (file.name.split(".").pop() || "").toUpperCase(), fileData: d })), flash); }} /></label></Field>
           <Field label="Title (optional)"><Input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="Defaults to the file name" /></Field>
           <div className="grid sm:grid-cols-2 gap-3"><Field label="Category (required)"><Select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{DOC_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</Select></Field><Field label="Who can see it"><Select value={f.visibility} onChange={(e) => setF({ ...f, visibility: e.target.value })}><option value="all">All residents</option><option value="owners">Owners only</option><option value="committee">Committee only (working file)</option></Select></Field></div>
           <div className="flex gap-2"><Btn grad onClick={upload}>File document</Btn><Btn kind="ghost" onClick={() => setAdding(false)}>Cancel</Btn></div>
@@ -3880,7 +3942,7 @@ function FireSafety() {
         </div>
         {/^data:image\//.test(building.evacPlan.data || "") && <img src={building.evacPlan.data} alt="Evacuation plan" className="mt-3 rounded-xl w-full" style={{ border: `1px solid ${T.border}` }} />}
       </>) : (<p style={{ color: T.textMuted }} className="text-sm">{canEdit ? "No evacuation plan uploaded yet — add your building's evacuation diagram so every resident can find it here." : "No evacuation plan uploaded yet. Ask your committee to add the building's evacuation diagram."}</p>)}
-      {canEdit && <div className="mt-3"><label style={{ borderColor: T.border, color: T.textMuted }} className="inline-flex items-center gap-2 border-2 border-dashed rounded-xl py-2.5 px-3 text-sm cursor-pointer"><Upload size={15} /> {building.evacPlan ? "Replace plan" : "Upload evacuation plan (PDF or image)"}<input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readImage(file, (data) => { update((s) => { s.buildings.find((b) => b.id === building.id).evacPlan = { name: file.name, type: file.type, data }; }); flash("Evacuation plan uploaded"); }); }} /></label></div>}
+      {canEdit && <div className="mt-3"><label style={{ borderColor: T.border, color: T.textMuted }} className="inline-flex items-center gap-2 border-2 border-dashed rounded-xl py-2.5 px-3 text-sm cursor-pointer"><Upload size={15} /> {building.evacPlan ? "Replace plan" : "Upload evacuation plan (PDF or image)"}<input type="file" accept="application/pdf,image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readUpload(file, (data) => { update((s) => { s.buildings.find((b) => b.id === building.id).evacPlan = { name: file.name, type: file.type, data }; }); flash("Evacuation plan uploaded"); }, flash); }} /></label></div>}
     </Card>
     <Card style={{ padding: 18 }}><SectionTitle>Emergency contacts</SectionTitle>
       {std.map((x, i) => (<div key={i} className="flex items-center justify-between gap-3 py-2.5" style={{ borderBottom: `1px solid ${T.border}` }}><span className="text-sm">{x.label}</span><a href={`tel:${x.number.replace(/\s/g, "")}`} className="font-bold" style={{ color: T.accent }}>{x.number}</a></div>))}
@@ -4001,7 +4063,7 @@ function SettingsView() {
     <div>
       <Head title="Settings" sub={building.name} />
       <Wrap>
-        <Card style={{ padding: 18 }}><SectionTitle>Logo</SectionTitle><div className="flex items-center gap-3">{building.logoImage ? <img src={building.logoImage} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl grid place-items-center font-black" style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, color: T.accentText }}>{building.logoText}</div>}<label style={{ borderColor: T.border, color: T.text }} className="border rounded-xl px-3 py-2 text-sm cursor-pointer inline-flex items-center gap-2"><Upload size={15} /> Upload image<input type="file" accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readImage(file, (d) => update((s) => { s.buildings.find((b) => b.id === building.id).logoImage = d; })); }} /></label>{building.logoImage && <button onClick={() => update((s) => { s.buildings.find((b) => b.id === building.id).logoImage = ""; })} style={{ color: T.textMuted }} className="text-xs underline">Use initials</button>}</div></Card>
+        <Card style={{ padding: 18 }}><SectionTitle>Logo</SectionTitle><div className="flex items-center gap-3">{building.logoImage ? <img src={building.logoImage} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl grid place-items-center font-black" style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, color: T.accentText }}>{building.logoText}</div>}<label style={{ borderColor: T.border, color: T.text }} className="border rounded-xl px-3 py-2 text-sm cursor-pointer inline-flex items-center gap-2"><Upload size={15} /> Upload image<input type="file" accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) readImage(file, (d) => update((s) => { s.buildings.find((b) => b.id === building.id).logoImage = d; }), flash, { maxDim: LOGO_MAX_DIM, keepAlpha: true }); }} /></label>{building.logoImage && <button onClick={() => update((s) => { s.buildings.find((b) => b.id === building.id).logoImage = ""; })} style={{ color: T.textMuted }} className="text-xs underline">Use initials</button>}</div></Card>
         <Card style={{ padding: 18 }}><SectionTitle>Appearance</SectionTitle><ThemeGrid value={building.themeId} onChange={(id) => update((s) => { s.buildings.find((b) => b.id === building.id).themeId = id; })} /></Card>
         <Card style={{ padding: 18 }}><SectionTitle>Building Details</SectionTitle>
           {canEdit ? (<div className="space-y-3">
@@ -4415,7 +4477,7 @@ function ComplianceView() {
       }).catch(() => flash("Upload failed — check the file type and size (10MB max)"));
       return;
     }
-    readImage(file, (data) => { update((s) => { const i = s.compliance.find((x) => x.id === id); if (i) { i.docs = i.docs || []; i.docs.push({ name: file.name, data }); } }); flash("Document attached"); });
+    readUpload(file, (data) => { update((s) => { const i = s.compliance.find((x) => x.id === id); if (i) { i.docs = i.docs || []; i.docs.push({ name: file.name, data }); } }); flash("Document attached"); }, flash);
   };
   const exportAgenda = () => {
     const openItems = items.filter((i) => i.status !== "done");
@@ -4645,7 +4707,7 @@ function DisputeRecordsView() {
             <SectionTitle>{addKind === "update" ? "Add an update" : addKind === "correspondence" ? "Log an email or message" : "Attach a document or email file"}</SectionTitle>
             <div className="space-y-3">
               {addKind === "correspondence" && <Field label="Channel"><Select value={f.channel} onChange={(e) => setF({ ...f, channel: e.target.value })}>{["Email", "In-app message", "Letter", "Phone call", "In person"].map((c) => <option key={c}>{c}</option>)}</Select></Field>}
-              {addKind === "document" && <Field label="File"><label className="flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-4 text-sm cursor-pointer" style={{ borderColor: T.border, color: f.fileName ? T.text : T.textMuted }}><Paperclip size={15} /> {f.fileName || "Choose a PDF, saved email (.eml), photo or letter"}<input type="file" className="hidden" onChange={(e) => { const file = e.target.files && e.target.files[0]; if (!file) return; if (backend) setF((p) => ({ ...p, fileName: file.name, fileObj: file })); else readImage(file, (data) => setF((p) => ({ ...p, fileName: file.name, fileData: data }))); }} /></label></Field>}
+              {addKind === "document" && <Field label="File"><label className="flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-4 text-sm cursor-pointer" style={{ borderColor: T.border, color: f.fileName ? T.text : T.textMuted }}><Paperclip size={15} /> {f.fileName || "Choose a PDF, saved email (.eml), photo or letter"}<input type="file" className="hidden" onChange={(e) => { const file = e.target.files && e.target.files[0]; if (!file) return; if (backend) setF((p) => ({ ...p, fileName: file.name, fileObj: file })); else readUpload(file, (data) => setF((p) => ({ ...p, fileName: file.name, fileData: data })), flash); }} /></label></Field>}
               <Field label={addKind === "document" ? "Note (optional)" : "What happened?"}><TextArea rows={3} value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} placeholder={addKind === "correspondence" ? "e.g. Emailed the occupier a copy of By-law 1 and asked for a response by Friday" : "e.g. 8:45pm Tue 7 Jul — spoke with occupier of 407 at their door about the noise; they agreed to end gatherings by 10pm"} /><div className="text-[11px] mt-1.5" style={{ color: T.textMuted }}>{DP_GUIDE_HINT}</div></Field>
               <div className="flex gap-2 justify-end"><Btn kind="ghost" onClick={() => setAddKind(null)}>Cancel</Btn><Btn onClick={addEvent} grad>Add to record</Btn></div>
             </div>
