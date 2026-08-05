@@ -2,8 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-07-22 · App version: v0.21.0 (deployed via GitHub web upload; includes
-> the previously pending Contractors quote fix). Nothing pending.
+> Last updated: 2026-08-05 · App version: v0.23.0 (NaloHub Guides). Nothing pending.
+> Note: v0.22.0 (minute-ready Maintenance Report + historical maintenance entry) and the
+> 5MB upload cap shipped without a doc update — both are now recorded below.
 >
 > _A synced copy of this doc lives in the NaloHub Claude Project so every new chat starts
 > with current context._
@@ -283,7 +284,21 @@ context carries across sessions instead of being re-derived each time.
 
 ## 11. Recent history (high level)
 
-- **v0.21.0 (current):** Getting Started — committee-gated launch tracker (8 phases / 53 steps,
+- **v0.23.0 (current):** NaloHub Guides — 8 role-aware task walkthroughs from ONE data
+  source (`GUIDES` in `ResidentPortal.jsx`): an in-app guide drawer (bottom sheet on
+  phones / right panel on desktop; the screen stays usable behind it) with per-step
+  tick-off persisted in localStorage (`nalo_guide_<id>_<uid>`), "You'll know it worked"
+  checkpoints, and a "Show me" that navigates + pulse-highlights the real button via
+  `[data-guide]` / `[data-tour]` selectors — plus a branded printable A4 cheat sheet
+  (`printGuide`, print window) rendered from the same data so app and paper can't drift.
+  Entry points: Help hub "Guides" grid, a contextual "Step-by-step" pill on task screens
+  (`GuideBar` via `VIEW_GUIDE`), all role-filtered. `HeaderAction` now forwards extra
+  props (for `data-guide` tags). `ResidentPortal.jsx` only; no schema/db.js changes.
+- **v0.22.x:** Minute-ready **Maintenance Report** (Word, date-range, KPI tiles, per-issue
+  trail) on Reports; **historical maintenance entry** (backdated Reported on / straight-to-
+  Resolved on, BM & committee only) on the Maintenance report form; file uploads capped at
+  5MB with automatic image compression.
+- **v0.21.0:** Getting Started — committee-gated launch tracker (8 phases / 53 steps,
   owners, N/A + notes, progress timeline, copyable committee summary; state on `building.onboarding`,
   final gate stamps `building.launchedAt`). Be In the Nalo Phase 1 — welcome banner, aboard meter
   with milestone toasts, badges (founding/explorer/settled) hooked into the first-week playbook;
@@ -313,6 +328,31 @@ context carries across sessions instead of being re-derived each time.
 ---
 
 ## Changelog
+
+- **2026-08-05 (XSS hardening — Correspondence, shipped with v0.23.0)** — The frontend half
+  of the 5 Aug security review, folded into the v0.23.0 deploy so one commit carries both.
+  New `htmlToText()` helper above `CorrespondenceView`; both inbound-email sinks now route
+  through it: the on-screen thread render (was `dangerouslySetInnerHTML`, now plain text)
+  and the print-thread path (HTML bodies converted to text, then escaped — `${esc(isHtml ?
+  htmlToText(body) : body)}`). Zero `dangerouslySetInnerHTML` remains in the file. Verified:
+  `<img onerror>`, `<svg onload>` and `<script>` payloads neutralised; builds green. The
+  three backend fixes from the same review were already live in Supabase. Behaviour change:
+  HTML-only inbound emails display as clean plain text.
+
+- **2026-08-05 (v0.23.0 — NaloHub Guides)** — One change, `src/ResidentPortal.jsx` only.
+  New Guides module inserted before `DemoOnly`: `GUIDES` (8 guides: get-in/home-screen ·
+  maintenance record→vote · maintenance report export · walk-through · committee vote ·
+  invite people · compliance calendar · announcements; each `{id, title, who, mins, icon,
+  roles(u), steps[{t, check, target?, view?}]}` with on-screen button labels wrapped in
+  ⟨…⟩), `GuideDrawer` (library + guide modes, progress, reset, print), `GuideBar`
+  (contextual pill, `VIEW_GUIDE` map), `GuideText` (⟨…⟩ → button pills), `printGuide`
+  (A4 branded print window: navy/teal, logo from nalohub.com with hide-on-error fallback,
+  "Free to copy, print and share… 🌊 Be in the Nalo." footer, "Current at <month year>").
+  Small supporting edits: `HeaderAction` spreads `...p`; seven `data-guide` tags on the
+  buttons guides point at (Maintenance Report action, Reports Word-report, Walk-Through
+  load/start, Directory Add person, Compliance Word agenda, Announcements New); Help hub
+  gains the Guides grid (uses `user` from context); `GuideDrawer`/`GuideBar` mounted in
+  `BuildingApp`; PLATFORM bumped to 0.23.0. Demo + prod builds verified green.
 
 - **2026-07-22 (v0.21.0 — Getting Started + Be In the Nalo, Phase 1)** — Two features, one change,
   `src/ResidentPortal.jsx` only (no db.js / schema / edge-function changes):
