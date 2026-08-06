@@ -2,7 +2,7 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-08-05 · App version: v0.23.0 (NaloHub Guides). Nothing pending.
+> Last updated: 2026-08-06 · App version: v0.24.0 (Guides for everyone — 20 guides, sectioned). Nothing pending.
 > Note: v0.22.0 (minute-ready Maintenance Report + historical maintenance entry) and the
 > 5MB upload cap shipped without a doc update — both are now recorded below.
 >
@@ -284,7 +284,18 @@ context carries across sessions instead of being re-derived each time.
 
 ## 11. Recent history (high level)
 
-- **v0.23.0 (current):** NaloHub Guides — 8 role-aware task walkthroughs from ONE data
+- **v0.24.0 (current):** Guides for everyone — 12 new guides (7 resident-facing: report a
+  problem, book/apply, find documents, message committee, privacy switches, join in,
+  post an event; plus corr-email, maint-history, nalopilot, docs-upload, complaint) and a
+  **sectioned library**: `GUIDE_SECTIONS` (Getting started · Everyday living · Building
+  manager · Committee engine room), each guide carries `sec`, and both the drawer library
+  and Help-hub grid render grouped. `VIEW_GUIDE` values may now be arrays; `GuideBar`
+  picks the first guide whose `roles(user)` passes (e.g. documents → docs-upload for
+  committee, find-docs for residents). Four new `data-guide` tags (Events Add, Documents
+  Upload, Disputes Log a complaint, Correspondence New message); icons `PartyPopper`,
+  `History` added to the lucide import. 20 guides total, all printable. `ResidentPortal.jsx`
+  only.
+- **v0.23.0:** NaloHub Guides — 8 role-aware task walkthroughs from ONE data
   source (`GUIDES` in `ResidentPortal.jsx`): an in-app guide drawer (bottom sheet on
   phones / right panel on desktop; the screen stays usable behind it) with per-step
   tick-off persisted in localStorage (`nalo_guide_<id>_<uid>`), "You'll know it worked"
@@ -328,6 +339,17 @@ context carries across sessions instead of being re-derived each time.
 ---
 
 ## Changelog
+
+- **2026-08-06 (v0.24.0 — Guides for everyone)** — `src/ResidentPortal.jsx` only. Twelve
+  new `GUIDES` entries (res-maint · book-apply · find-docs · message · privacy · join-in ·
+  events · corr-email · maint-history · nalopilot · docs-upload · complaint), all step
+  labels verified against live buttons (incl. real maintenance stages New → Triaged →
+  In progress → Resolved, Dispute entry kinds Update / Email or message / Document /
+  From in-app messages, Documents visibility options, Events ⟨Post event⟩, Correspondence
+  ⟨Unfiled⟩→⟨File⟩). Sectioned library via `GUIDE_SECTIONS` + `sec` per guide, grouped
+  rendering in `GuideDrawer` and Help hub. `VIEW_GUIDE` supports arrays with role-based
+  resolution in `GuideBar`. Four new `data-guide` tags; `PartyPopper`/`History` imports.
+  PLATFORM 0.24.0. Demo + prod builds verified green.
 
 - **2026-08-05 (XSS hardening — Correspondence, shipped with v0.23.0)** — The frontend half
   of the 5 Aug security review, folded into the v0.23.0 deploy so one commit carries both.
