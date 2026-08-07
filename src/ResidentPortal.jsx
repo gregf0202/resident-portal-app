@@ -876,7 +876,7 @@ function TourNudge({ onStart }) {
       if (!el) return;
       const r = el.getBoundingClientRect();
       if (r.width > 0 && r.left >= 0) setPos({ ring: { top: r.top - 5, left: r.left - 5, width: r.width + 10, height: r.height + 10 }, bubble: { top: r.top - 8, left: r.right + 14 }, side: "right" });
-      else setPos({ ring: null, bubble: { top: 64, right: 10 }, side: "below" }); // mobile: below the top-bar help button
+      else setPos({ ring: null, bubble: { top: "calc(64px + var(--sat))", right: 10 }, side: "below" }); // mobile: below the top-bar help button (clears the status bar)
     };
     const t = setTimeout(() => { measure(); setShow(true); }, 1400);
     window.addEventListener("resize", measure);
@@ -892,7 +892,7 @@ function TourNudge({ onStart }) {
         @keyframes nalo-nudge-wave { 0%, 100% { transform: rotate(0deg) } 10% { transform: rotate(14deg) } 20% { transform: rotate(-8deg) } 30% { transform: rotate(14deg) } 40% { transform: rotate(-4deg) } 50% { transform: rotate(10deg) } 60% { transform: rotate(0deg) } }
       `}</style>
       {pos.ring && <div style={{ position: "fixed", ...pos.ring, borderRadius: 14, pointerEvents: "none", zIndex: 60, animation: "nalo-nudge-ring 2s ease-out infinite" }} />}
-      <div style={{ position: "fixed", ...pos.bubble, zIndex: 60, width: 252, animation: "nalo-nudge-in 700ms cubic-bezier(.34,1.4,.64,1) both, nalo-nudge-float 3.2s ease-in-out 900ms infinite" }}>
+      <div style={{ position: "fixed", ...pos.bubble, zIndex: 60, width: "min(252px, calc(100vw - 20px - var(--sal) - var(--sar)))", animation: "nalo-nudge-in 700ms cubic-bezier(.34,1.4,.64,1) both, nalo-nudge-float 3.2s ease-in-out 900ms infinite" }}>
         {pos.side === "right" && <div style={{ position: "absolute", left: -6, top: 20, width: 12, height: 12, transform: "rotate(45deg)", background: T.surface, borderLeft: `1px solid ${T.accent}`, borderBottom: `1px solid ${T.accent}` }} />}
         {pos.side === "below" && <div style={{ position: "absolute", right: 18, top: -6, width: 12, height: 12, transform: "rotate(45deg)", background: T.surface, borderLeft: `1px solid ${T.accent}`, borderTop: `1px solid ${T.accent}` }} />}
         <div style={{ background: T.surface, color: T.text, border: `1px solid ${T.accent}`, borderRadius: 16, boxShadow: `0 12px 36px rgba(0,0,0,0.45), 0 0 0 4px ${hexToRgba(T.accent, 0.08)}`, padding: "12px 14px" }}>
@@ -931,7 +931,7 @@ export function BuildingApp() {
       {tour && <GuidedTour steps={buildTourSteps(building, user, backend)} T={T} onNavigate={setView} onClose={endTour} />}
       <GuideDrawer />
       {navOpen && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setNavOpen(false)} />}
-      <aside className={`fixed z-40 top-0 left-0 h-full w-64 flex flex-col transition-transform duration-200 ${navOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`} style={{ background: T.sidebar, color: T.sidebarText }}>
+      <aside className={`fixed z-40 top-0 left-0 h-full w-64 flex flex-col transition-transform duration-200 ${navOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`} style={{ background: T.sidebar, color: T.sidebarText, paddingTop: "var(--sat)", paddingBottom: "var(--sab)", paddingLeft: "var(--sal)" }}>
         <BuildingBrand go={go} />
         {!backend && <PreviewSwitcher />}
         <button data-tour="tour-button" onClick={startTour} className="mx-3 mt-1 mb-1 rounded-xl px-3 py-2 text-sm font-medium flex items-center gap-2" style={{ color: T.sidebarText, background: hexToRgba(T.accent, 0.16), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}><HelpCircle size={15} style={{ color: T.accent }} /> Take the tour</button>
@@ -948,8 +948,11 @@ export function BuildingApp() {
         {platformAdmin && <button onClick={exitToConsole} className="mx-3 mt-2 rounded-xl px-3 py-2 text-sm font-medium text-left flex items-center gap-2" style={{ color: T.sidebarText, background: hexToRgba(T.accent, 0.16), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}><ChevronLeft size={15} style={{ color: T.accent }} /> All buildings</button>}
         {backend && <button onClick={signOut} className="m-3 rounded-xl px-3 py-2 text-sm font-medium text-left" style={{ color: T.sidebarText, border: `1px solid ${hexToRgba("#ffffff", 0.12)}` }}>Sign out</button>}
       </aside>
-      <main className="flex-1 min-w-0 md:ml-64 flex flex-col min-h-screen">
-        <div className="md:hidden sticky top-0 z-20 flex items-center gap-3 px-4 py-3" style={{ background: T.sidebar, color: T.sidebarText }}><button onClick={() => setNavOpen(true)} className="p-1"><Menu size={22} /></button><button onClick={() => go("dashboard")} className="font-semibold flex-1 text-left truncate">{building.name}</button><button onClick={startTour} className="p-1.5 rounded-lg" style={{ background: T.sidebarActive }}><HelpCircle size={18} /></button>{view !== "dashboard" && <button onClick={() => go("dashboard")} className="p-1.5 rounded-lg" style={{ background: T.sidebarActive }}><Home size={18} /></button>}</div>
+      <main className="flex-1 min-w-0 md:ml-64 flex flex-col min-h-screen" style={{ paddingBottom: "var(--sab)" }}>
+        {/* Mobile top bar. Padded by the iOS safe-area insets: without this the bar
+            renders underneath the status bar / Dynamic Island in standalone (Home
+            Screen) mode, where iOS swallows the taps and the buttons are dead. */}
+        <div className="md:hidden sticky top-0 z-20 flex items-center gap-1" style={{ background: T.sidebar, color: T.sidebarText, paddingTop: "calc(0.5rem + var(--sat))", paddingBottom: "0.5rem", paddingLeft: "calc(0.75rem + var(--sal))", paddingRight: "calc(0.75rem + var(--sar))" }}><button aria-label="Open menu" onClick={() => setNavOpen(true)} className="shrink-0 grid place-items-center min-w-[44px] min-h-[44px] rounded-lg"><Menu size={22} /></button><button onClick={() => go("dashboard")} className="font-semibold flex-1 min-w-0 text-left truncate min-h-[44px] px-1">{building.name}</button><button aria-label="Take the tour" onClick={startTour} className="shrink-0 grid place-items-center min-w-[44px] min-h-[44px] rounded-lg" style={{ background: T.sidebarActive }}><HelpCircle size={18} /></button>{view !== "dashboard" && <button aria-label="Go to dashboard" onClick={() => go("dashboard")} className="shrink-0 grid place-items-center min-w-[44px] min-h-[44px] rounded-lg" style={{ background: T.sidebarActive }}><Home size={18} /></button>}</div>
         <div className="flex-1" data-tour="main-content"><GuideBar /><ViewRouter /></div>
         <Footer />
       </main>
@@ -2890,7 +2893,7 @@ function GuideDrawer() {
       <style>{`@keyframes naloGuidePulse { 0%,100% { box-shadow: 0 0 0 0 ${hexToRgba(T.accent, 0)}; } 30% { box-shadow: 0 0 0 6px ${hexToRgba(T.accent, 0.45)}; } }
       .nalo-guide-pulse { animation: naloGuidePulse 1.3s ease-out 2; border-radius: 12px; }`}</style>
       <div className="fixed inset-0 z-40 md:bg-transparent bg-black/30" onClick={close} style={{ pointerEvents: "auto" }} />
-      <div className="fixed z-50 bottom-0 left-0 right-0 md:left-auto md:top-0 md:w-[400px] flex flex-col rounded-t-2xl md:rounded-none md:border-l" style={{ background: T.bg, borderColor: T.border, maxHeight: "78vh", height: "auto", boxShadow: "0 -12px 40px rgba(0,0,0,0.35)", ...(window.innerWidth >= 768 ? { maxHeight: "100vh", height: "100vh" } : {}) }}>
+      <div className="fixed z-50 bottom-0 left-0 right-0 md:left-auto md:top-0 md:w-[400px] flex flex-col rounded-t-2xl md:rounded-none md:border-l" style={{ background: T.bg, borderColor: T.border, maxHeight: "calc(78vh + var(--sab))", height: "auto", paddingBottom: "var(--sab)", boxShadow: "0 -12px 40px rgba(0,0,0,0.35)", ...(window.innerWidth >= 768 ? { maxHeight: "100vh", height: "100vh", paddingTop: "var(--sat)" } : {}) }}>
         <div className="flex items-center gap-2 px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
           {g && <button onClick={() => setOpenId("library")} className="p-1 -ml-1 rounded-lg" style={{ color: T.textMuted }}><ChevronLeft size={18} /></button>}
           <BookOpen size={16} style={{ color: T.accent }} />
@@ -3148,8 +3151,8 @@ function VotingLive() {
           </div>
           <Btn grad style={{ marginTop: 10 }} onClick={appoint}>Appoint proxy</Btn>
           {proxies.length > 0 && <div className="mt-4 space-y-2">{proxies.map((p) => (
-            <div key={p.id} className="flex items-center gap-2 text-sm py-1.5" style={{ borderTop: `1px dashed ${T.border}` }}>
-              <div className="flex-1">{p.principal_name} → <b>{p.proxy_name}</b> <span className="text-xs" style={{ color: T.textMuted }}>{fmtDate(p.date_from)} – {fmtDate(p.date_to)}</span></div>
+            <div key={p.id} className="flex items-center flex-wrap gap-2 text-sm py-1.5" style={{ borderTop: `1px dashed ${T.border}` }}>
+              <div className="flex-1 min-w-0 basis-full sm:basis-auto">{p.principal_name} → <b>{p.proxy_name}</b> <span className="text-xs" style={{ color: T.textMuted }}>{fmtDate(p.date_from)} – {fmtDate(p.date_to)}</span></div>
               <Badge color={p.status === "active" ? SEMANTIC.ok : VOTE_COLOR.abstain}>{p.status}</Badge>
               <Btn kind="ghost" onClick={() => openProxyFormPdf(p.id).catch(() => flash("Couldn't generate the form"))}><Download size={13} /> Form</Btn>
               {p.status === "active" && (p.principal_user_id === uid || isCommittee(user.role)) && <Btn kind="ghost" onClick={async () => { await revokeProxy(buildingId, p.id); flash("Proxy revoked"); reload(); }}>Revoke</Btn>}
@@ -4071,7 +4074,7 @@ function Messaging() {
           {f.category === "Application" && <Field label="Document (required for applications)"><label style={{ borderColor: f.doc ? T.accent : T.border, color: f.doc ? T.text : T.textMuted }} className="flex items-center gap-2 border-2 border-dashed rounded-xl py-3 px-3 text-sm cursor-pointer"><Paperclip size={15} /> {f.doc || "Attach your application document"}<input type="file" className="hidden" onChange={(e) => setF({ ...f, doc: e.target.files?.[0]?.name || "" })} /></label></Field>}
           <Btn grad onClick={send}>Send message</Btn>
         </div></Card>
-        {list.map((m) => (<Card key={m.id} style={{ padding: 16 }}><div className="flex items-center justify-between gap-2"><div className="font-semibold">{m.subject}</div><div className="flex gap-1.5"><Badge color={HUE.messaging[1]}>{m.category}</Badge><Badge color={T.textMuted}>→ {m.to}</Badge></div></div><p style={{ color: T.textMuted }} className="text-sm mt-1">{m.body}</p>{m.doc && <div className="mt-2"><FileChip name={m.doc} color={T.accent} /></div>}<div style={{ color: T.textMuted }} className="text-xs mt-2">{m.from} · {fmtDate(m.date)}</div></Card>))}
+        {list.map((m) => (<Card key={m.id} style={{ padding: 16 }}><div className="flex items-center justify-between flex-wrap gap-2"><div className="font-semibold min-w-0">{m.subject}</div><div className="flex flex-wrap gap-1.5 min-w-0"><Badge color={HUE.messaging[1]}>{m.category}</Badge><Badge color={T.textMuted}>→ {m.to}</Badge></div></div><p style={{ color: T.textMuted }} className="text-sm mt-1">{m.body}</p>{m.doc && <div className="mt-2"><FileChip name={m.doc} color={T.accent} /></div>}<div style={{ color: T.textMuted }} className="text-xs mt-2">{m.from} · {fmtDate(m.date)}</div></Card>))}
       </Wrap>
     </div>
   );
