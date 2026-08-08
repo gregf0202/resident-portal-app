@@ -340,6 +340,15 @@ context carries across sessions instead of being re-derived each time.
 
 ## Changelog
 
+- **2026-08-08 (v0.25.1 — by-law hanging indent)** — `src/ResidentPortal.jsx` only. v0.25.0 put
+  `white-space: pre-wrap` on by-law text, which keeps the leading spaces but lets *wrapped* lines
+  fall back to the left margin — so "(a) …" began indented and its second line didn't. Replaced
+  with a small `ByLawText` component that splits on newlines and renders each line as its own
+  block, padded by `Math.round(leadingSpaces / 4) * 18px` (capped at 3 levels). Continuation lines
+  now hang under the clause they belong to, and (i)/(ii) nest under (a)/(b). Used by both the
+  By-Laws card and the NaloPilot by-law card. Blank source lines become 7px spacers. Demo + prod
+  builds verified green.
+
 - **2026-08-08 (v0.25.0 — by-law display fixes + NaloPilot answers from by-laws)** —
   `src/ResidentPortal.jsx` only; no `db.js`, schema or migration change. Found when Curve's
   38 real by-laws went in and the screen showed them jumbled, unnumbered and with every
