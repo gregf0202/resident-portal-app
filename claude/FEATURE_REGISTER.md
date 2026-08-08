@@ -5,10 +5,11 @@ horizon. Written for people, not developers — one line per feature, no jargon.
 
 **Last updated: 8 August 2026** · Maintained at every stage of development.
 
-> _The master copy of this register lives in the NaloHub Claude Project (as
-> `claude/FEATURE_REGISTER.md`, alongside `ARCHITECTURE.md`) so every new chat starts with
-> the current feature story. Whenever a feature is built, planned, or deferred — in any
-> conversation — an updated copy is issued to replace it, without being asked._
+> _**The master copy lives in the NaloHub Claude Project, at the root as `FEATURE_REGISTER.md`**
+> — alongside `ARCHITECTURE.md` — so every new chat starts with the current feature story.
+> The app repo keeps a mirror at `claude/FEATURE_REGISTER.md`; **edit the project copy, then
+> copy it to the repo**, never the other way round. Whenever a feature is built, planned or
+> deferred — in any conversation — an updated copy is issued to replace it, without being asked._
 
 *(A dash of housekeeping: dates are shown where the record is certain; the foundation era
 is listed in build order without invented dates.)*
