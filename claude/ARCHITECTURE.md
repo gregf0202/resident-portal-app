@@ -2,7 +2,7 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-08-06 · App version: v0.24.0 (Guides for everyone — 20 guides, sectioned). Nothing pending.
+> Last updated: 2026-08-08 · App version: v0.25.0 (By-law display fixes + NaloPilot reads the building's by-laws). Nothing pending.
 > Note: v0.22.0 (minute-ready Maintenance Report + historical maintenance entry) and the
 > 5MB upload cap shipped without a doc update — both are now recorded below.
 >
@@ -339,6 +339,31 @@ context carries across sessions instead of being re-derived each time.
 ---
 
 ## Changelog
+
+- **2026-08-08 (v0.25.0 — by-law display fixes + NaloPilot answers from by-laws)** —
+  `src/ResidentPortal.jsx` only; no `db.js`, schema or migration change. Found when Curve's
+  38 real by-laws went in and the screen showed them jumbled, unnumbered and with every
+  sub-clause run together.
+  1) **Numbering.** By-laws now arrive in two shapes: added in-app they carry `num` (a
+     number); bulk-loaded from a registered CMS they carry `number` (a string, verbatim as
+     printed). `ByLawsView` and the NaloPilot answer card both rendered `b.num` only, so
+     loaded by-laws showed a bare "By-law" chip. New module-level `blNum(b)` reads either,
+     and `add()`'s `Math.max(...)` uses it so adding a by-law to a loaded set still works
+     (it was producing `NaN`).
+  2) **Order.** `bylaws` has no `ORDER BY` anywhere in the read path, so the list rendered in
+     whatever order Postgres returned. `ByLawsView` now sorts with `blSort` (numeric, ascending).
+  3) **Line breaks.** By-law text is stored with real newlines and indented sub-clauses; both
+     render sites used a plain `<p>`/`<div>`, which collapses them. Added
+     `whiteSpace: "pre-wrap"` to the By-Laws card and the NaloPilot by-law card.
+  4) **NaloPilot now sends `buildingId`** to the `nalo-answer` edge function (v2, deployed
+     2026-08-08). Previously the client matched by-laws locally and showed them as cards, but
+     the *model's answer text* was written from legislation only, because the function never
+     saw the by-laws. `NaloPilotView` passes `buildingId` through to `NaloPilotInner` and it
+     goes in the invoke body. The function scopes by-laws with the caller's own JWT (see §9),
+     so this cannot widen access.
+  5) The By-Laws add-form helper line no longer claims bulk CMS upload exists — it points at
+     `info@nalohub.com` until that flow ships.
+  Demo + production builds both verified green.
 
 - **2026-08-06 (v0.24.0 — Guides for everyone)** — `src/ResidentPortal.jsx` only. Twelve
   new `GUIDES` entries (res-maint · book-apply · find-docs · message · privacy · join-in ·
