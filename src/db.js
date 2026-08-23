@@ -1034,7 +1034,12 @@ export async function exportBuildingData(bid, buildingName, onProgress) {
 
   say("Notices, bookings, documents…");
   for (const t of CONTENT_EXPORT) {
-    const rows = (await all(supabase.from(t).select("id, data, created_at").eq("building_id", bid))).map((r) => ({ id: r.id, created_at: r.created_at, ...(r.data || {}) }));
+    // Heavy tables (documents, gallery) are read through their *_meta views so
+    // file payloads never land inside the workbook; the files themselves are
+    // listed with download links in the Stored Files sheet and the Documents
+    // Files sheet below.
+    const source = HEAVY_TABLES[t] ? HEAVY_TABLES[t].view : t;
+    const rows = (await all(supabase.from(source).select("id, data, created_at").eq("building_id", bid))).map((r) => ({ id: r.id, created_at: r.created_at, ...(r.data || {}) }));
     sheets.push([t.charAt(0).toUpperCase() + t.slice(1), rows]);
   }
 

@@ -284,7 +284,13 @@ context carries across sessions instead of being re-derived each time.
 
 ## 11. Recent history (high level)
 
-- **v0.26.0 (current):** Maintenance Report v2 — summary page first (five tiles incl.
+- **v0.27.0 (current):** Set up by + Export everything — `building.provenance` (who
+  established the record, who funds it, append-only novations) rendered as a one-line
+  `ProvenanceLine` on the committee dashboard and a `ProvenanceCard` in Settings; the
+  existing building export relabelled **Export everything**, now logging each run to
+  `building.exports[]` (shown under the provenance card) and reading documents/gallery
+  through their `*_meta` views so file payloads never enter the workbook.
+- **v0.26.0:** Maintenance Report v2 — summary page first (five tiles incl.
   Approved this period, decision panel with dates sent, waiting-on breakdown, oldest open
   item), detail grouped by waiting-on, resolved as a compact table; `m.waitingOn` /
   `m.waitingSince` on maintenance JSONB; one ACCEPTED quote per item; duplicate-title nudge.
@@ -343,6 +349,32 @@ context carries across sessions instead of being re-derived each time.
 ---
 
 ## Changelog
+
+- **2026-08-22 (v0.27.0 — Set up by + Export everything)** — `src/ResidentPortal.jsx` and one
+  loop in `src/db.js`. No schema, no edge functions. Product backing for the *Your Building,
+  Your Records* proposition.
+  1) **Provenance** — `building.provenance = { establishedBy:{name,role,userId}, establishedAt,
+     fundedBy: committee|bm|other, fundedByName, novations:[{at,from,to,toName,byName}] }` on the
+     existing `buildings.data` JSONB. `stampProvenance()` writes it once: at the final Getting
+     Started gate (`p8s3`, alongside `launchedAt`) and on building creation in SetupWizard.
+     `fundedBy` defaults to `bm` when the creator's role is `manager`, else `committee`.
+  2) **ProvenanceLine** (dashboard, committee + BM only; residents never see it) and
+     **ProvenanceCard** (Settings, first card before Export). Wording from `provenanceLine()`:
+     *Set up by [name], [role], [long date]. This is the building's record.* plus *The owners
+     corporation can export it in full at any time.* when not committee-funded, plus the most
+     recent novation. "Change who funds NaloHub" is committee-only and **appends** a novation; the
+     BM sees the card but not the control. "Record it now" backfills buildings that predate this.
+  3) **Export everything** — `DataExportCard` retitled; on success it pushes
+     `{at, byUserId, byName, byRole, sheets, files, scope:"full"}` to `building.exports[]` (capped
+     at 100). The last five render as an **Export log** under the provenance card, so the ownership
+     claim carries an audit trail in the UI as well as in `audit_log`. Dashboard line carries an
+     *Export everything* link to Settings for committee.
+  4) **db.js fix** — `exportBuildingData` iterated `CONTENT` with `select("id, data")`, which pulled
+     `documents.fileData` and `gallery.image` base64 payloads into the XML workbook (Curve: the
+     19.9 MB minutes PDF). Now routes `HEAVY_TABLES` through their `_meta` views; files remain
+     listed with 7-day signed links on the Stored Files sheet.
+  5) Demo seed: Seahaven provenance (set up by the BM, handed to the Committee 1 July) and one
+     logged export, so both lines show in the demo.
 
 - **2026-08-22 (v0.26.0 — Maintenance Report v2)** — `src/ResidentPortal.jsx` and one
   function in `src/db.js`. No schema, no edge functions.
