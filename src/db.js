@@ -628,6 +628,14 @@ export async function addMaintQuote(bid, maintenanceId, q) {
 export async function setQuoteStatus(id, status) {
   const { error } = await supabase.from("maintenance_quotes").update({ status }).eq("id", id);
   if (error) throw error;
+  // Exactly one ACCEPTED quote per item: accepting one closes its siblings.
+  if (status === "accepted") {
+    const { data: q } = await supabase.from("maintenance_quotes").select("maintenance_id").eq("id", id).maybeSingle();
+    if (q && q.maintenance_id) {
+      const { error: e2 } = await supabase.from("maintenance_quotes").update({ status: "rejected" }).eq("maintenance_id", q.maintenance_id).neq("id", id).eq("status", "accepted");
+      if (e2) throw e2;
+    }
+  }
 }
 
 // ---- contracts & contractors registers ------------------------------------
@@ -1304,7 +1312,7 @@ if (DEMO_MODE) {
   addMaintActivity = async (_b, mid, kind, body, extra) => { if (!DS.mact[mid]) DS.mact[mid] = seedTrail(mid); DS.mact[mid].push({ id: id(), maintenance_id: mid, kind, body, data: extra || {}, created_at: now() }); };
   listMaintQuotes = async (_b, mid) => { if (!DS.quotes[mid]) DS.quotes[mid] = seedQuotes(mid); return [...DS.quotes[mid]]; };
   addMaintQuote = async (_b, mid, q) => { if (!DS.quotes[mid]) DS.quotes[mid] = seedQuotes(mid); DS.quotes[mid].push({ id: id(), maintenance_id: mid, status: "received", created_at: now(), ...q }); };
-  setQuoteStatus = async (qid, status) => { Object.values(DS.quotes).forEach((arr) => { const q = arr.find((x) => x.id === qid); if (q) q.status = status; }); };
+  setQuoteStatus = async (qid, status) => { Object.values(DS.quotes).forEach((arr) => { const q = arr.find((x) => x.id === qid); if (q) { q.status = status; if (status === "accepted") arr.forEach((o) => { if (o.id !== qid && o.status === "accepted") o.status = "rejected"; }); } }); };
   listContracts = async () => [...DS.contracts];
   saveContract = async (_b, c) => { if (c.id) { const x = DS.contracts.find((y) => y.id === c.id); Object.assign(x, c); } else DS.contracts.push({ id: id(), status: "active", ...c }); };
   deleteContract = async (_b, cid) => { DS.contracts = DS.contracts.filter((c) => c.id !== cid); };

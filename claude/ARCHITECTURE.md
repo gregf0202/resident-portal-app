@@ -284,7 +284,11 @@ context carries across sessions instead of being re-derived each time.
 
 ## 11. Recent history (high level)
 
-- **v0.24.0 (current):** Guides for everyone — 12 new guides (7 resident-facing: report a
+- **v0.26.0 (current):** Maintenance Report v2 — summary page first (five tiles incl.
+  Approved this period, decision panel with dates sent, waiting-on breakdown, oldest open
+  item), detail grouped by waiting-on, resolved as a compact table; `m.waitingOn` /
+  `m.waitingSince` on maintenance JSONB; one ACCEPTED quote per item; duplicate-title nudge.
+- **v0.24.0:** Guides for everyone — 12 new guides (7 resident-facing: report a
   problem, book/apply, find documents, message committee, privacy switches, join in,
   post an event; plus corr-email, maint-history, nalopilot, docs-upload, complaint) and a
   **sectioned library**: `GUIDE_SECTIONS` (Getting started · Everyday living · Building
@@ -339,6 +343,32 @@ context carries across sessions instead of being re-derived each time.
 ---
 
 ## Changelog
+
+- **2026-08-22 (v0.26.0 — Maintenance Report v2)** — `src/ResidentPortal.jsx` and one
+  function in `src/db.js`. No schema, no edge functions.
+  1) **Report restructure** (`rptBuildKids`, `rptResolvedTable`, new `mwfWaitingOn`):
+     summary page first — five stat tiles (adds *Approved this period*), the amber
+     "N items are waiting on your decision" panel (recommended supplier, amount, date sent
+     to vote, days waiting), a waiting-on breakdown with proportional bars, oldest open item,
+     category line — then a page break and the open-item cards grouped by waiting-on, then
+     resolved items as a compact table with average days and a period total. Status chip
+     shows **AT VOTE** for items sent to the committee. Approved spend = works recorded in
+     range + quotes accepted by a motion decided in range (de-duplicated per item).
+  2) **Waiting on** — `M_WAITING` constant; a button row in the Maintenance Triage card
+     writes `m.waitingOn` (committee|quote|contractor|access|ready|"") and `m.waitingSince`
+     via `persistChange` on the existing `maintenance.data` JSONB. When unset the report
+     derives it from the workflow trail (`contractor_confirmed` → contractor; `decision` →
+     ready; `vote_opened` or a recommended quote → committee; triaged with no quotes → quote).
+  3) **One ACCEPTED quote per item** — `db.setQuoteStatus(id, "accepted")` now rejects any
+     other accepted quote on the same `maintenance_id` (and the demo mirror does the same in
+     memory). The legacy `acceptQuote` was already exclusive. The report additionally
+     de-duplicates across legacy `m.quotes` and workflow `maintenance_quotes`, keeping the most
+     recent and tagging the rest *superseded*.
+  4) **Duplicate-title nudge** — `normTitle()`; an amber notice under the title on the report
+     form when an existing issue in the building matches, with the "add an update instead"
+     suggestion. Non-blocking.
+  5) Demo seed: distinct titles (`uniqueTitle`), a waiting-on value on every triaged /
+     in-progress issue. Guide step and Reports card blurb updated.
 
 - **2026-08-08 (v0.25.1 — by-law hanging indent)** — `src/ResidentPortal.jsx` only. v0.25.0 put
   `white-space: pre-wrap` on by-law text, which keeps the leading spaces but lets *wrapped* lines
