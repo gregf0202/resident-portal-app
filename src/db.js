@@ -1198,23 +1198,159 @@ if (DEMO_MODE) {
 
   const u12 = { id: "unit-12", unit_number: "12", lot_number: "Lot 12", parking_spaces: 2, agent_business: "Coastal Property Management", agent_contact: "Mia Chen", agent_phone: "07 5444 1200", agent_email: "mia@coastalpm.com.au", agent_note: "Lease ends 31 March. Contact agent for any entry or maintenance access.", notes: null };
   const u5 = { id: "unit-5", unit_number: "5", lot_number: "Lot 5", parking_spaces: 1, agent_business: "", agent_contact: "", agent_phone: "", agent_email: "" };
+  // ---- Demo residents: sixteen further units so Unit Search shows a building,
+  // not a sample. Every person, pet, vehicle, key and note below is invented.
+  const DEMO_UNITS = [
+    { n: "1",  lot: "Lot 1",  bays: 1 },
+    { n: "2",  lot: "Lot 2",  bays: 1, agent: ["Beachline Realty", "Hannah Okafor", "07 5443 8890", "rentals@beachlinerealty.com.au"] },
+    { n: "3",  lot: "Lot 3",  bays: 2 },
+    { n: "7",  lot: "Lot 7",  bays: 1, notes: "Owner overseas until March. All correspondence via the managing agent." },
+    { n: "8",  lot: "Lot 8",  bays: 2, agent: ["Coastal Property Management", "Mia Chen", "07 5444 1200", "mia@coastalpm.com.au"] },
+    { n: "9",  lot: "Lot 9",  bays: 1 },
+    { n: "14", lot: "Lot 14", bays: 2 },
+    { n: "15", lot: "Lot 15", bays: 1, agent: ["Beachline Realty", "Hannah Okafor", "07 5443 8890", "rentals@beachlinerealty.com.au"], notes: "Balcony tiles replaced Aug 2025 under the building's works programme." },
+    { n: "16", lot: "Lot 16", bays: 1 },
+    { n: "18", lot: "Lot 18", bays: 2, notes: "Two spaces, both in the basement. Second space leased informally to Unit 9 — committee aware." },
+    { n: "19", lot: "Lot 19", bays: 1 },
+    { n: "24", lot: "Lot 24", bays: 2 },
+    { n: "25", lot: "Lot 25", bays: 1, agent: ["Hinterland Property Co", "Dev Raman", "07 5476 2200", "dev@hinterlandproperty.com.au"] },
+    { n: "27", lot: "Lot 27", bays: 1 },
+    { n: "30", lot: "Lot 30", bays: 2, notes: "Accessible parking bay allocated. Do not reassign without committee approval." },
+    { n: "31", lot: "Lot 31", bays: 1 },
+  ].map((u) => ({ id: "unit-" + u.n, unit_number: u.n, lot_number: u.lot, parking_spaces: u.bays,
+    agent_business: u.agent ? u.agent[0] : "", agent_contact: u.agent ? u.agent[1] : "",
+    agent_phone: u.agent ? u.agent[2] : "", agent_email: u.agent ? u.agent[3] : "", notes: u.notes || null }));
+
+  // [unit, type, name, email, phone, extras]
+  const DEMO_PEOPLE = [
+    ["1",  "owner",  "Aroha Whitiora",   "aroha.whitiora@example.com",  "0401 220 118", { moved: "2019-08-14" }],
+    ["1",  "owner",  "Daniel Whitiora",  "d.whitiora@example.com",      "0401 220 119", {}],
+    ["1",  "emergency_contact", "Mere Whitiora", "",                    "0401 887 004", {}],
+    ["2",  "owner",  "Priyanka Raghavan","p.raghavan@example.com",      "0402 551 340", { away: true }],
+    ["2",  "tenant", "Callum Fitzgerald","callum.fitz@example.com",     "0403 118 776", { moved: "2025-03-01", note: "Primary tenant contact" }],
+    ["2",  "tenant", "Sinead Fitzgerald","sinead.fitz@example.com",     "0403 118 777", { moved: "2025-03-01" }],
+    ["3",  "owner",  "Marcus Oyelaran",  "m.oyelaran@example.com",      "0404 662 019", { app: "email" }],
+    ["3",  "owner",  "Justine Oyelaran", "j.oyelaran@example.com",      "0404 662 020", {}],
+    ["7",  "owner",  "Wei Lin Tan",      "weilin.tan@example.com",      "0405 330 921", { note: "Contact by email only — different time zone" }],
+    ["7",  "tenant", "Bridget Halloran", "b.halloran@example.com",      "0405 774 118", { moved: "2024-11-18" }],
+    ["8",  "owner",  "Grant Petrakis",   "g.petrakis@example.com",      "0406 200 553", {}],
+    ["8",  "tenant", "Amara Nwosu",      "amara.nwosu@example.com",     "0406 918 224", { moved: "2026-01-12", note: "Works night shift — no calls before 11am" }],
+    ["8",  "emergency_contact", "Chidi Nwosu", "",                      "0406 918 225", {}],
+    ["9",  "owner",  "Rosemary Ashcroft","r.ashcroft@example.com",      "0407 445 662", { moved: "2016-02-02", app: "name" }],
+    ["14", "owner",  "Toby Vandenberg",  "toby.v@example.com",          "0408 771 903", {}],
+    ["14", "owner",  "Eleni Vandenberg", "eleni.v@example.com",         "0408 771 904", {}],
+    ["14", "tenant", "Harper Okonkwo",   "harper.ok@example.com",       "0408 226 551", { moved: "2025-09-30" }],
+    ["15", "owner",  "Sanjay Mehta",     "s.mehta@example.com",         "0409 330 447", {}],
+    ["15", "tenant", "Freya Lindqvist",  "freya.l@example.com",         "0409 118 662", { moved: "2026-02-14", note: "Primary tenant contact" }],
+    ["15", "tenant", "Otto Lindqvist",   "otto.l@example.com",          "0409 118 663", { moved: "2026-02-14" }],
+    ["16", "owner",  "Josephine Barrett","jo.barrett@example.com",      "0410 552 118", { moved: "2021-06-11" }],
+    ["16", "emergency_contact", "Alan Barrett", "",                     "0410 552 119", {}],
+    ["18", "owner",  "Hamish Cullen",    "h.cullen@example.com",        "0411 447 220", { app: "email" }],
+    ["18", "owner",  "Niamh Cullen",     "n.cullen@example.com",        "0411 447 221", {}],
+    ["19", "owner",  "Tessa Blackwood",  "t.blackwood@example.com",     "0412 990 331", {}],
+    ["19", "tenant", "Dmitri Volkov",    "d.volkov@example.com",        "0412 118 447", { moved: "2025-07-01" }],
+    ["24", "owner",  "Lachlan Pereira",  "l.pereira@example.com",       "0413 662 118", {}],
+    ["24", "owner",  "Camila Pereira",   "c.pereira@example.com",       "0413 662 119", { app: "email" }],
+    ["25", "owner",  "Yusuf Demirel",    "y.demirel@example.com",       "0414 330 992", { away: true }],
+    ["25", "tenant", "Georgia Hollis",   "g.hollis@example.com",        "0414 771 118", { moved: "2024-05-20", note: "Renewed 12 months from May 2026" }],
+    ["27", "owner",  "Beatrice Nkemdi",  "b.nkemdi@example.com",        "0415 226 774", { moved: "2018-10-03" }],
+    ["30", "owner",  "Duncan Fairweather","d.fairweather@example.com",  "0416 118 553", { note: "Accessible bay allocated" }],
+    ["30", "emergency_contact", "Kate Fairweather", "",                 "0416 118 554", {}],
+    ["31", "owner",  "Anushka Kapoor",   "a.kapoor@example.com",        "0417 445 006", {}],
+    ["31", "tenant", "Marco Bianchi",    "m.bianchi@example.com",       "0417 990 118", { moved: "2026-04-08" }],
+  ];
+  const DEMO_PAST = [
+    ["2",  "tenant", "Rhys Donnelly",   "r.donnelly@example.com", "0403 001 442", "2022-02-01", "2025-02-10"],
+    ["8",  "tenant", "Kirra Mullane",   "k.mullane@example.com",  "0406 552 118", "2023-06-01", "2025-12-19"],
+    ["15", "tenant", "Peta Suarez",     "p.suarez@example.com",   "0409 776 220", "2021-01-15", "2026-01-31"],
+    ["19", "owner",  "Gordon Whitely",  "g.whitely@example.com",  "0412 118 000", "2009-03-01", "2024-08-22"],
+    ["25", "tenant", "Ines Cardoso",    "i.cardoso@example.com",  "0414 337 118", "2022-09-01", "2024-05-01"],
+  ];
+  const DEMO_PETS = [
+    ["1",  "dog", "Biscuit", "Border Collie"], ["3", "cat", "Miso", "Burmese"],
+    ["8",  "dog", "Frankie", "Staffordshire Terrier"], ["14", "cat", "Olive", "Domestic short hair"],
+    ["18", "dog", "Rudy", "Groodle"], ["24", "bird", "Kiwi", "Cockatiel"],
+    ["30", "dog", "Bramble", "Labrador (assistance dog)"],
+  ];
+  const DEMO_VEHICLES = [
+    ["1", "Subaru", "Outback", "Silver", "482 QRT", "B1-04"], ["1", "Honda", "Jazz", "Blue", "119 KLM", "B1-05"],
+    ["2", "Mazda", "CX-5", "Grey", "770 HDS", "B1-11"],
+    ["3", "Tesla", "Model 3", "White", "902 NVE", "B2-02"], ["3", "Ford", "Ranger", "Blue", "551 TWJ", "B2-03"],
+    ["7", "Hyundai", "i30", "Red", "338 PLQ", "B1-19"],
+    ["8", "Toyota", "Corolla", "Black", "624 MZB", "B2-08"],
+    ["9", "Kia", "Sportage", "White", "417 DGN", "B1-22"],
+    ["14", "Volkswagen", "Golf", "Silver", "285 RHC", "B2-15"], ["14", "Nissan", "X-Trail", "Bronze", "930 FTA", "B2-16"],
+    ["15", "Mitsubishi", "Outlander", "Grey", "146 SVE", "B1-27"],
+    ["16", "Toyota", "Yaris", "Yellow", "703 BKQ", "B1-31"],
+    ["18", "BMW", "X3", "Black", "558 JWR", "B2-21"], ["18", "Holden", "Astra", "White", "212 CNP", "B2-22"],
+    ["19", "Suzuki", "Swift", "Green", "864 LDM", "B1-35"],
+    ["24", "Isuzu", "D-Max", "Grey", "377 VQT", "B2-29"], ["24", "Audi", "A4", "Navy", "509 HBX", "B2-30"],
+    ["25", "Renault", "Captur", "Orange", "631 WFK", "B1-40"],
+    ["27", "Toyota", "Camry", "White", "748 MRD", "B1-42"],
+    ["30", "Kia", "Carnival", "Silver", "195 ZTH", "B2-01 (accessible)"],
+    ["31", "Mazda", "2", "Red", "422 GQL", "B1-47"],
+  ];
+  const DEMO_ACCESS = [
+    ["1", "fob", "F-1001", "Lobby & garage", "issued", "Aroha Whitiora"], ["1", "fob", "F-1002", "Lobby & garage", "issued", "Daniel Whitiora"],
+    ["2", "fob", "F-1014", "Lobby & garage", "issued", "Callum Fitzgerald"], ["2", "key", "K-002", "Front door", "issued", "Callum Fitzgerald"],
+    ["3", "fob", "F-1021", "Lobby & garage", "issued", "Marcus Oyelaran"], ["3", "swipe_card", "SC-118", "Gym level", "issued", "Justine Oyelaran"],
+    ["7", "fob", "F-1033", "Lobby & garage", "issued", "Bridget Halloran"],
+    ["8", "fob", "F-1040", "Lobby & garage", "issued", "Amara Nwosu"], ["8", "fob", "F-1041", "Lobby & garage", "lost", "Kirra Mullane"],
+    ["9", "fob", "F-1052", "Lobby & garage", "issued", "Rosemary Ashcroft"],
+    ["14", "fob", "F-1060", "Lobby & garage", "issued", "Toby Vandenberg"], ["14", "remote", "R-208", "Garage roller door", "issued", "Eleni Vandenberg"],
+    ["15", "fob", "F-1071", "Lobby & garage", "issued", "Freya Lindqvist"], ["15", "fob", "F-1072", "Lobby & garage", "returned", "Peta Suarez"],
+    ["16", "fob", "F-1080", "Lobby & garage", "issued", "Josephine Barrett"],
+    ["18", "fob", "F-1090", "Lobby & garage", "issued", "Hamish Cullen"], ["18", "swipe_card", "SC-140", "Gym level", "issued", "Niamh Cullen"],
+    ["19", "fob", "F-1101", "Lobby & garage", "issued", "Dmitri Volkov"],
+    ["24", "fob", "F-1112", "Lobby & garage", "issued", "Lachlan Pereira"], ["24", "remote", "R-221", "Garage roller door", "issued", "Camila Pereira"],
+    ["25", "fob", "F-1120", "Lobby & garage", "issued", "Georgia Hollis"],
+    ["27", "fob", "F-1131", "Lobby & garage", "issued", "Beatrice Nkemdi"],
+    ["30", "fob", "F-1140", "Lobby & garage", "issued", "Duncan Fairweather"], ["30", "key", "K-030", "Accessible entry", "issued", "Duncan Fairweather"],
+    ["31", "fob", "F-1150", "Lobby & garage", "issued", "Marco Bianchi"],
+  ];
+  const DEMO_BREACHES = [
+    ["9",  "By-law 8 (Parking)", "Visitor bay used by a resident vehicle over three consecutive nights.", "open", 12],
+    ["18", "By-law 12 (Noise)",  "Rooftop gathering after 11pm. Owner contacted, apologised, no repeat.", "remedied", 64],
+    ["25", "By-law 5 (Common property)", "Bicycles stored in the corridor outside the lot. Removed after notice.", "remedied", 130],
+  ];
+  const demoResidents = () => {
+    const people = [], past = [], pets = [], vehicles = [], access = [], breaches = [];
+    DEMO_PEOPLE.forEach(([u, t, name, email, phone, x]) => {
+      const rec = { id: id(), unit_id: "unit-" + u, person_type: t, full_name: name, email: email || null, phone, is_current: true };
+      if (x.moved) rec.move_in = x.moved;
+      if (x.note) rec.notes = x.note;
+      if (x.away) rec.notes = "Non-resident owner — investment lot";
+      if (x.app === "email") rec.app_match = { match: "email", role: t, status: "active", full_name: name, email };
+      if (x.app === "name") rec.app_match = { match: "name", role: t, status: "active", full_name: name, email: "r.ashcroft@oldmail.example.com" };
+      people.push(rec);
+    });
+    DEMO_PAST.forEach(([u, t, name, email, phone, mi, mo]) => past.push({ id: id(), unit_id: "unit-" + u, person_type: t, full_name: name, email, phone, is_current: false, move_in: mi, move_out: mo }));
+    DEMO_PETS.forEach(([u, t, name, breed]) => pets.push({ id: id(), unit_id: "unit-" + u, pet_type: t, name, breed, approval_status: "approved" }));
+    DEMO_VEHICLES.forEach(([u, mk, md, col, reg, bay]) => vehicles.push({ id: id(), unit_id: "unit-" + u, make: mk, model: md, colour: col, registration: reg, parking_bay: bay }));
+    DEMO_ACCESS.forEach(([u, t, ident, label, status, holder]) => access.push({ id: id(), unit_id: "unit-" + u, item_type: t, identifier: ident, label, status, issued_to: holder }));
+    DEMO_BREACHES.forEach(([u, ref, desc, status, ago]) => breaches.push({ id: id(), unit_id: "unit-" + u, bylaw_ref: ref, description: desc, status, occurred_at: dAhead(-ago).slice(0, 10) }));
+    return { people: people.concat(past), pets, vehicles, access, breaches };
+  };
+  const DR = demoResidents();
   const DS = {
-    units: [u12, u5, { id: "unit-22", unit_number: "22", lot_number: "Lot 22", parking_spaces: 1 }],
+    units: [u12, u5, { id: "unit-22", unit_number: "22", lot_number: "Lot 22", parking_spaces: 1 }, ...DEMO_UNITS],
     people: [
       { id: id(), unit_id: "unit-12", person_type: "owner", full_name: "Owen Chandler", email: "owen@example.com", phone: "0400 111 222", is_current: true, app_match: { match: "email", role: "owner", status: "active", full_name: "Owen Chandler", email: "owen@example.com" } },
       { id: id(), unit_id: "unit-12", person_type: "tenant", full_name: "Tina Marsh", email: "tina@example.com", phone: "0400 333 444", is_current: true, move_in: "2025-02-01" },
       { id: id(), unit_id: "unit-12", person_type: "emergency_contact", full_name: "Ray Marsh", phone: "0400 777 888", is_current: true },
       { id: id(), unit_id: "unit-12", person_type: "tenant", full_name: "Jonah Pryce", email: "jonah@example.com", phone: "0400 999 000", is_current: false, move_in: "2023-03-01", move_out: "2025-01-20" },
       { id: id(), unit_id: "unit-5", person_type: "owner", full_name: "Betty Nguyen", email: "betty@example.com", phone: "0400 555 666", is_current: true },
+      ...DR.people,
     ],
-    pets: [{ id: id(), unit_id: "unit-12", pet_type: "dog", name: "Rex", breed: "Cavoodle", approval_status: "approved" }],
-    vehicles: [{ id: id(), unit_id: "unit-12", make: "Toyota", model: "RAV4", colour: "White", registration: "123ABC", parking_bay: "B2-14" }],
+    pets: [{ id: id(), unit_id: "unit-12", pet_type: "dog", name: "Rex", breed: "Cavoodle", approval_status: "approved" }, ...DR.pets],
+    vehicles: [{ id: id(), unit_id: "unit-12", make: "Toyota", model: "RAV4", colour: "White", registration: "123ABC", parking_bay: "B2-14" }, ...DR.vehicles],
     access: [
       { id: id(), unit_id: "unit-12", item_type: "fob", identifier: "F-9981", label: "Lobby & garage", status: "issued", issued_to: "Tina Marsh", ack_at: daysAgo(3) },
       { id: id(), unit_id: "unit-12", item_type: "key", identifier: "K-012", label: "Front door", status: "issued", issued_to: "Owen Chandler", issued_to_user_id: "x", ack_at: null },
       { id: id(), unit_id: "unit-5", item_type: "swipe_card", identifier: "SC-445", label: "Gym level", status: "issued", issued_to: "Betty Nguyen" },
+      ...DR.access,
     ],
-    breaches: [{ id: id(), unit_id: "unit-12", bylaw_ref: "By-law 12 (Noise)", description: "Late-night noise complaint — resolved after friendly chat.", status: "remedied", occurred_at: dAhead(-40).slice(0, 10) }],
+    breaches: [{ id: id(), unit_id: "unit-12", bylaw_ref: "By-law 12 (Noise)", description: "Late-night noise complaint — resolved after friendly chat.", status: "remedied", occurred_at: dAhead(-40).slice(0, 10) }, ...DR.breaches],
     applications: [
       { id: "app-1", unit_id: "unit-12", kind: "application", category: "pet", title: "Pet approval — Luna (ragdoll cat)", details: { pet_type: "cat", name: "Luna", breed: "Ragdoll", unit: "12", description: "Indoor cat, desexed and microchipped." }, status: "submitted", submitted_by: "u-owner", submitted_at: daysAgo(1), decision_note: null },
       { id: "app-2", unit_id: "unit-12", kind: "application", category: "parking_permit", title: "Parking permit — Mazda CX-5 (456XYZ)", details: { vehicle_make: "Mazda", vehicle_model: "CX-5", vehicle_colour: "Blue", vehicle_rego: "456XYZ", date_from: dAhead(-20), date_to: dAhead(345), unit: "12" }, status: "approved", submitted_by: DEMO_UID, submitted_at: daysAgo(20), decided_at: daysAgo(19), decision_note: "Approved for 12 months" },
@@ -1326,7 +1462,8 @@ if (DEMO_MODE) {
   // the data it already has.
   getDocumentFile = async () => null;
   getGalleryImages = async () => ({});
-  listUnits = async () => DS.units;
+  // sorted the way the live query orders them, so the chip row reads naturally
+  listUnits = async () => [...DS.units].sort((a, b) => String(a.unit_number).localeCompare(String(b.unit_number), undefined, { numeric: true }));
   createUnit = async (_b, unit_number, lot_number, parking_spaces) => { DS.units.push({ id: id(), unit_number, lot_number, parking_spaces: Number(parking_spaces) || 0 }); };
   addUnitPerson = async (_b, unitId, row) => { DS.people.push({ id: id(), unit_id: unitId, is_current: true, ...row }); };
   addUnitPet = async (_b, unitId, row) => { DS.pets.push({ id: id(), unit_id: unitId, ...row }); };

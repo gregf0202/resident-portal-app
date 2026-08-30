@@ -284,17 +284,7 @@ context carries across sessions instead of being re-derived each time.
 
 ## 11. Recent history (high level)
 
-- **v0.27.0 (current):** Set up by + Export everything — `building.provenance` (who
-  established the record, who funds it, append-only novations) rendered as a one-line
-  `ProvenanceLine` on the committee dashboard and a `ProvenanceCard` in Settings; the
-  existing building export relabelled **Export everything**, now logging each run to
-  `building.exports[]` (shown under the provenance card) and reading documents/gallery
-  through their `*_meta` views so file payloads never enter the workbook.
-- **v0.26.0:** Maintenance Report v2 — summary page first (five tiles incl.
-  Approved this period, decision panel with dates sent, waiting-on breakdown, oldest open
-  item), detail grouped by waiting-on, resolved as a compact table; `m.waitingOn` /
-  `m.waitingSince` on maintenance JSONB; one ACCEPTED quote per item; duplicate-title nudge.
-- **v0.24.0:** Guides for everyone — 12 new guides (7 resident-facing: report a
+- **v0.24.0 (current):** Guides for everyone — 12 new guides (7 resident-facing: report a
   problem, book/apply, find documents, message committee, privacy switches, join in,
   post an event; plus corr-email, maint-history, nalopilot, docs-upload, complaint) and a
   **sectioned library**: `GUIDE_SECTIONS` (Getting started · Everyday living · Building
@@ -349,58 +339,6 @@ context carries across sessions instead of being re-derived each time.
 ---
 
 ## Changelog
-
-- **2026-08-22 (v0.27.0 — Set up by + Export everything)** — `src/ResidentPortal.jsx` and one
-  loop in `src/db.js`. No schema, no edge functions. Product backing for the *Your Building,
-  Your Records* proposition.
-  1) **Provenance** — `building.provenance = { establishedBy:{name,role,userId}, establishedAt,
-     fundedBy: committee|bm|other, fundedByName, novations:[{at,from,to,toName,byName}] }` on the
-     existing `buildings.data` JSONB. `stampProvenance()` writes it once: at the final Getting
-     Started gate (`p8s3`, alongside `launchedAt`) and on building creation in SetupWizard.
-     `fundedBy` defaults to `bm` when the creator's role is `manager`, else `committee`.
-  2) **ProvenanceLine** (dashboard, committee + BM only; residents never see it) and
-     **ProvenanceCard** (Settings, first card before Export). Wording from `provenanceLine()`:
-     *Set up by [name], [role], [long date]. This is the building's record.* plus *The owners
-     corporation can export it in full at any time.* when not committee-funded, plus the most
-     recent novation. "Change who funds NaloHub" is committee-only and **appends** a novation; the
-     BM sees the card but not the control. "Record it now" backfills buildings that predate this.
-  3) **Export everything** — `DataExportCard` retitled; on success it pushes
-     `{at, byUserId, byName, byRole, sheets, files, scope:"full"}` to `building.exports[]` (capped
-     at 100). The last five render as an **Export log** under the provenance card, so the ownership
-     claim carries an audit trail in the UI as well as in `audit_log`. Dashboard line carries an
-     *Export everything* link to Settings for committee.
-  4) **db.js fix** — `exportBuildingData` iterated `CONTENT` with `select("id, data")`, which pulled
-     `documents.fileData` and `gallery.image` base64 payloads into the XML workbook (Curve: the
-     19.9 MB minutes PDF). Now routes `HEAVY_TABLES` through their `_meta` views; files remain
-     listed with 7-day signed links on the Stored Files sheet.
-  5) Demo seed: Seahaven provenance (set up by the BM, handed to the Committee 1 July) and one
-     logged export, so both lines show in the demo.
-
-- **2026-08-22 (v0.26.0 — Maintenance Report v2)** — `src/ResidentPortal.jsx` and one
-  function in `src/db.js`. No schema, no edge functions.
-  1) **Report restructure** (`rptBuildKids`, `rptResolvedTable`, new `mwfWaitingOn`):
-     summary page first — five stat tiles (adds *Approved this period*), the amber
-     "N items are waiting on your decision" panel (recommended supplier, amount, date sent
-     to vote, days waiting), a waiting-on breakdown with proportional bars, oldest open item,
-     category line — then a page break and the open-item cards grouped by waiting-on, then
-     resolved items as a compact table with average days and a period total. Status chip
-     shows **AT VOTE** for items sent to the committee. Approved spend = works recorded in
-     range + quotes accepted by a motion decided in range (de-duplicated per item).
-  2) **Waiting on** — `M_WAITING` constant; a button row in the Maintenance Triage card
-     writes `m.waitingOn` (committee|quote|contractor|access|ready|"") and `m.waitingSince`
-     via `persistChange` on the existing `maintenance.data` JSONB. When unset the report
-     derives it from the workflow trail (`contractor_confirmed` → contractor; `decision` →
-     ready; `vote_opened` or a recommended quote → committee; triaged with no quotes → quote).
-  3) **One ACCEPTED quote per item** — `db.setQuoteStatus(id, "accepted")` now rejects any
-     other accepted quote on the same `maintenance_id` (and the demo mirror does the same in
-     memory). The legacy `acceptQuote` was already exclusive. The report additionally
-     de-duplicates across legacy `m.quotes` and workflow `maintenance_quotes`, keeping the most
-     recent and tagging the rest *superseded*.
-  4) **Duplicate-title nudge** — `normTitle()`; an amber notice under the title on the report
-     form when an existing issue in the building matches, with the "add an update instead"
-     suggestion. Non-blocking.
-  5) Demo seed: distinct titles (`uniqueTitle`), a waiting-on value on every triaged /
-     in-progress issue. Guide step and Reports card blurb updated.
 
 - **2026-08-08 (v0.25.1 — by-law hanging indent)** — `src/ResidentPortal.jsx` only. v0.25.0 put
   `white-space: pre-wrap` on by-law text, which keeps the leading spaces but lets *wrapped* lines
@@ -535,3 +473,113 @@ context carries across sessions instead of being re-derived each time.
   Not app code: produced an editable BCC proposal document ("NaloHub at Curve") from local demo
   screenshots — the demo was rebuilt locally with the building renamed "Curve" purely for the images,
   with a fictional-sample-data disclaimer; prod/demo remain "SeaHaven".
+
+## Curve Birtinya bulk import (30 Aug 2026, data operation)
+
+Loaded the BM's `Residents_08_2026.xlsx` into building `ecd3d712-c949-4dec-b20c-9a5d36df0eb6` via a single
+transactional SQL script run through the Supabase connector on Greg's authorisation
+(`curve_birtinya_import.sql`, kept with the staging workbook `Curve_Birtinya_Import_Staging.xlsx`).
+
+- Targets: `units` (56, incl. agent_* and `notes`), `unit_people` (125; `is_current=true`; landline /
+  committee role / primary-tenant marker in `notes`), `unit_vehicles` (82; Make/Model into `model`, make
+  blank), `unit_pets` (11), `unit_access_items` (230; `item_type='key'`, label "Key or fob", no holder),
+  `unit_breaches` (4; `occurred_at=current_date`, flagged in description), one `audit_log` row
+  (`unit.bulk_imported`).
+- Every insert has a duplicate guard (unit_number / name+type / registration / identifier), so the
+  script is safe to re-run. Existing unit 105 was preserved; agent/notes only fill blanks.
+- Mapping decisions: Mobile over Phone; Car Space / Car Location / Broadcast Custom Group / Requests /
+  Lot / Fax skipped; EC Member kept as a note for membership invites; Owner Investor columns not
+  needed (every tenanted unit already had owner rows). Non-unit rows (Building Manager, Fire Warden
+  Key Set, Emergency Access Lock Box) skipped. "Office" imported as a unit.
+- Gap: `units.notes` is not rendered by `UnitSearchView` / `ManagingAgentCard`. Add a "Unit notes"
+  card (committee-only) — confirm `unit_health_check` RPC returns the full unit row incl. `notes`.
+- Schema facts confirmed live: `buildings.name` lives in `buildings.data->>'name'` (JSONB);
+  `unit_people` has `user_id, move_in, move_out, is_current, notes`; `unit_access_items` has
+  `status, notes, ack_*`; `audit_log(building_id, actor, action, target, detail jsonb)`.
+
+## v0.29.0 — editable unit registry, versioned conditions, unit-linked disputes (30 Aug 2026)
+
+`src/ResidentPortal.jsx` (`UnitSearchView` rewritten) + `src/db.js` + one migration
+(`unit_health_check_app_match_and_past_people`). No table changes: every column used already
+existed, and `unit_people` had `move_in` / `move_out` / `is_current` / `notes` unused until now.
+
+- **New db.js functions**, all guarded by the existing committee RLS (`*_committee` policies,
+  `is_committee` = roles `bcc` + `admin`): `updateUnit`, `updateUnitPerson`, `moveOutUnitPerson`,
+  `restoreUnitPerson`, `moveOutUnitPeopleOfType`, `deleteUnitPerson`, `updateUnitPet`,
+  `deleteUnitPet`, `updateUnitVehicle`, `deleteUnitVehicle`, `updateAccessItem`,
+  `deleteAccessItem`, `updateUnitBreach`, `deleteUnitBreach`. Each writes an `audit_log` row.
+  All 14 are re-bound in the `DEMO_MODE` block against `DS`.
+- **Archive, not delete, for occupants.** Owners and tenants get `is_current=false` + `move_out`;
+  `unit_health_check` returns them separately as `past_people`. `deleteUnitPerson` is exposed in
+  the UI only on already-archived rows and on non-occupant types (property manager, emergency
+  contact). `moveOutUnitPeopleOfType` backs the "replacing the current owner/tenant" checkbox on
+  the add-person form (default off — co-owners are the norm).
+- **`unit_health_check` rewrite.** Each row in `people` now carries `app_match`: a lateral pick of
+  the best membership match, `{match:'email'|'name', role, status, full_name, email}`. Email match
+  is building-wide (email is the identity); name match is restricted to memberships whose `unit`
+  is this unit, and is surfaced as a weaker amber signal the committee confirms, never an
+  automatic merge. `residents_directory` entries gain `matched`, so the UI stops double-listing a
+  member who is already on the register and instead shows the unmatched ones as
+  "App members not on the register". Also adds `past_people`.
+- **UI notes:** edit panels render inline under the row being edited (single `edit` state of
+  `{kind,id}`, `moveout` is a pseudo-kind). `units.notes` finally has a home: a committee/BM-only
+  "Unit notes" card, hidden while the unit edit panel is open so there is only ever one editor.
+  Legacy `store.keyfobs` rows merged into the keys section stay read-only (no id in the new table).
+- **Known gap:** building managers (`role='manager'`) are not `is_committee`, so they cannot edit
+  the register they most often maintain. Deliberate for now; see the Feature Register.
+
+### v0.29.0 demo dataset
+
+`db.js` `DEMO_MODE` block: `DEMO_UNITS` / `DEMO_PEOPLE` / `DEMO_PAST` / `DEMO_PETS` /
+`DEMO_VEHICLES` / `DEMO_ACCESS` / `DEMO_BREACHES` are compact tuple tables expanded by
+`demoResidents()` into `DR`, which is spread into `DS`. Nineteen units, 34 owners and tenants.
+To add or change demo residents, edit the tuple tables, not `DS`. Demo `listUnits` now sorts
+numerically to match the live query's `order("unit_number")`.
+
+### v0.29.0 additions (merged with the registry work above, which shipped in the same release)
+
+Two streams were built in parallel in separate chats, both stamped v0.28.0, both touching
+`ResidentPortal.jsx` and `db.js`. They are merged here and released together as **v0.29.0**;
+committing one on top of the other would have silently reverted it.
+
+- **Versioned Conditions of Approval.** Migration `versioned_conditions_of_approval`:
+  `motions.version` plus `amend_motion_conditions(uuid, jsonb, text, text)`, SECURITY DEFINER,
+  execute granted to `authenticated` only. The RPC re-checks BCC membership server-side,
+  requires a reason, snapshots prior conditions and all votes into `motions.details.history`,
+  deletes the live votes, bumps `version`, writes an `app_notifications` row (recipient_role
+  `bcc`) and an `audit_log` entry, all in one statement. Verified before writing: the
+  `trg_tally_motion` trigger fires on INSERT only, so clearing votes cannot mis-decide a
+  motion, and `uq_motion_vote_principal` frees each member to vote again.
+  `updateMotionConditions` is no longer called from the UI.
+- **Disputes carry a unit.** `disputes.unit_id` existed but was never written, so the Unit
+  Search Disputes section could not populate for any unit in any building. `createDispute`
+  now takes `unitId`; a picker was added to the Disputes form and a "+ Dispute" flow to
+  Unit Search.
+- **BM registry access, per building.** `can_edit_unit_registry(bid)` = `is_committee(bid)`
+  OR (`has_role(bid,'manager')` AND `buildings.data->>'bmRegistryWrite'`). The five registry
+  policies now call it; `unit_breaches` deliberately still calls `is_committee`. Note the key
+  is **camelCase**: the app writes the whole building object into `buildings.data`, so the
+  function reads `bmRegistryWrite` (snake_case kept as a fallback). `UnitSearchView` computes
+  the same rule client-side to avoid showing controls the database would refuse.
+- **Bug fix: motion card remount.** `MotionCard` and `Tally` were defined inside `VotingLive`
+  and rendered as `<MotionCard />`, so each render created a new component type and React
+  remounted the whole card — every text box on a motion lost focus after one character. Both
+  are now plain function calls (`motionCard(m)`, `tally(m)`) with `key` on the returned Card,
+  which keeps their closures and stops the remount.
+
+**Nested-component remount: a recurring trap in this file.** A component declared inside another
+component gets a new function identity on every parent render. Rendered as `<Thing />`, React
+sees a different component *type* each time and unmounts and remounts the whole subtree, so any
+text field inside it loses focus after a single character. Three instances existed; all are fixed
+in v0.29.0:
+
+| Where | Symptom | Fix |
+|---|---|---|
+| `MotionCard` / `Tally` in `VotingLive` | every text box on a motion (comments, questions, amend reason) | rendered as plain calls `motionCard(m)` / `tally(m)`, `key` moved onto the returned Card |
+| `Section` in `UnitSearchView` | editing any person, pet, vehicle, key or breach row | hoisted to module level, takes `T` from `useApp()` |
+| `Form` in `AssetRegister` | adding or editing an asset | hoisted to module level as `AssetForm` |
+
+Anything left nested (`H`, `P`, `Bar`) is presentational and contains no inputs, so the remount is
+harmless. When adding UI here, declare components at module level, or render them as plain
+function calls. The regression test for this types character by character and asserts the node is
+still connected and holds the full string; asserting only that a panel opens will not catch it.
