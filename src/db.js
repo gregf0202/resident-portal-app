@@ -466,6 +466,88 @@ export async function addUnitBreach(bid, unitId, row) {
   audit(bid, "unit.breach_recorded", row.bylaw_ref || "");
 }
 
+// ---- Unit registry: corrections, move-outs and removals -------------------
+// People are archived, never deleted: an owner or tenant who leaves keeps their
+// place in the unit's history (is_current false + a move_out date), so the
+// building can still answer "who lived here in 2024?". Only an archived record
+// can be deleted outright, and only to clean up a genuine mis-entry.
+export async function updateUnit(bid, unitId, patch) {
+  const { error } = await supabase.from("units").update(patch).eq("id", unitId);
+  if (error) throw error;
+  audit(bid, "unit.updated", unitId);
+}
+export async function updateUnitPerson(bid, id, patch) {
+  const { error } = await supabase.from("unit_people").update(patch).eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.person_updated", patch.full_name || id);
+}
+export async function moveOutUnitPerson(bid, id, moveOut) {
+  const { error } = await supabase.from("unit_people").update({ is_current: false, move_out: moveOut || new Date().toISOString().slice(0, 10) }).eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.person_moved_out", id);
+}
+export async function restoreUnitPerson(bid, id) {
+  const { error } = await supabase.from("unit_people").update({ is_current: true, move_out: null }).eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.person_restored", id);
+}
+// Archives every current person of a given type on a unit. Used when a new
+// owner or tenant replaces the last one rather than joining them.
+export async function moveOutUnitPeopleOfType(bid, unitId, personType, moveOut) {
+  const { data, error } = await supabase.from("unit_people")
+    .update({ is_current: false, move_out: moveOut || new Date().toISOString().slice(0, 10) })
+    .eq("unit_id", unitId).eq("person_type", personType).eq("is_current", true).select("id");
+  if (error) throw error;
+  const n = (data || []).length;
+  if (n) audit(bid, "unit.people_moved_out", `${n} ${personType}${n === 1 ? "" : "s"}`);
+  return n;
+}
+export async function deleteUnitPerson(bid, id) {
+  const { error } = await supabase.from("unit_people").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.person_deleted", id);
+}
+export async function updateUnitPet(bid, id, patch) {
+  const { error } = await supabase.from("unit_pets").update(patch).eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.pet_updated", patch.name || patch.pet_type || id);
+}
+export async function deleteUnitPet(bid, id) {
+  const { error } = await supabase.from("unit_pets").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.pet_removed", id);
+}
+export async function updateUnitVehicle(bid, id, patch) {
+  const { error } = await supabase.from("unit_vehicles").update(patch).eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.vehicle_updated", patch.registration || id);
+}
+export async function deleteUnitVehicle(bid, id) {
+  const { error } = await supabase.from("unit_vehicles").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.vehicle_removed", id);
+}
+export async function updateAccessItem(bid, id, patch) {
+  const { error } = await supabase.from("unit_access_items").update(patch).eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.access_item_updated", patch.identifier || id);
+}
+export async function deleteAccessItem(bid, id) {
+  const { error } = await supabase.from("unit_access_items").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.access_item_removed", id);
+}
+export async function updateUnitBreach(bid, id, patch) {
+  const { error } = await supabase.from("unit_breaches").update(patch).eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.breach_updated", patch.bylaw_ref || id);
+}
+export async function deleteUnitBreach(bid, id) {
+  const { error } = await supabase.from("unit_breaches").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "unit.breach_removed", id);
+}
+
 // ---- Applications & Bookings --------------------------------------------
 // Unified table: kind 'application' | 'booking', category-specific fields in
 // details jsonb. Submission alerts the committee; decisions alert the
@@ -1109,8 +1191,10 @@ if (DEMO_MODE) {
   const DS = {
     units: [u12, u5, { id: "unit-22", unit_number: "22", lot_number: "Lot 22", parking_spaces: 1 }],
     people: [
-      { id: id(), unit_id: "unit-12", person_type: "owner", full_name: "Owen Chandler", email: "owen@example.com", phone: "0400 111 222", is_current: true },
-      { id: id(), unit_id: "unit-12", person_type: "tenant", full_name: "Tina Marsh", email: "tina@example.com", phone: "0400 333 444", is_current: true },
+      { id: id(), unit_id: "unit-12", person_type: "owner", full_name: "Owen Chandler", email: "owen@example.com", phone: "0400 111 222", is_current: true, app_match: { match: "email", role: "owner", status: "active", full_name: "Owen Chandler", email: "owen@example.com" } },
+      { id: id(), unit_id: "unit-12", person_type: "tenant", full_name: "Tina Marsh", email: "tina@example.com", phone: "0400 333 444", is_current: true, move_in: "2025-02-01" },
+      { id: id(), unit_id: "unit-12", person_type: "emergency_contact", full_name: "Ray Marsh", phone: "0400 777 888", is_current: true },
+      { id: id(), unit_id: "unit-12", person_type: "tenant", full_name: "Jonah Pryce", email: "jonah@example.com", phone: "0400 999 000", is_current: false, move_in: "2023-03-01", move_out: "2025-01-20" },
       { id: id(), unit_id: "unit-5", person_type: "owner", full_name: "Betty Nguyen", email: "betty@example.com", phone: "0400 555 666", is_current: true },
     ],
     pets: [{ id: id(), unit_id: "unit-12", pet_type: "dog", name: "Rex", breed: "Cavoodle", approval_status: "approved" }],
@@ -1218,9 +1302,12 @@ if (DEMO_MODE) {
   unitHealthCheck = async (_b, unitNo) => {
     const q = String(unitNo || "").trim().toLowerCase();
     const u = DS.units.find((x) => x.unit_number.toLowerCase() === q);
-    if (!u) return { unit: null, residents_directory: [], people: [], pets: [], vehicles: [], access_items: [], breaches: [], disputes: [], applications: [] };
+    if (!u) return { unit: null, residents_directory: [], people: [], past_people: [], pets: [], vehicles: [], access_items: [], breaches: [], disputes: [], applications: [] };
     const by = (arr) => arr.filter((r) => r.unit_id === u.id);
-    return { unit: u, people: by(DS.people), residents_directory: [], pets: by(DS.pets), vehicles: by(DS.vehicles), access_items: by(DS.access), breaches: by(DS.breaches), disputes: [], applications: DS.applications.filter((a) => a.unit_id === u.id) };
+    return { unit: u,
+      people: by(DS.people).filter((p) => p.is_current !== false),
+      past_people: by(DS.people).filter((p) => p.is_current === false),
+      residents_directory: [], pets: by(DS.pets), vehicles: by(DS.vehicles), access_items: by(DS.access), breaches: by(DS.breaches), disputes: [], applications: DS.applications.filter((a) => a.unit_id === u.id) };
   };
   // Demo documents carry their (tiny) fileData inline in the seeded store, so
   // the lazy path is never needed — returning null makes the UI fall back to
@@ -1237,6 +1324,25 @@ if (DEMO_MODE) {
   acknowledgeAccessItem = async () => ({ ok: true });
   addUnitBreach = async (_b, unitId, row) => { DS.breaches.push({ id: id(), unit_id: unitId, status: "open", ...row }); };
   updateUnitAgent = async (_b, unitId, agent) => { const u = DS.units.find((x) => x.id === unitId); if (u) { u.agent_business = agent.business; u.agent_contact = agent.contact; u.agent_phone = agent.phone; u.agent_email = agent.email; u.agent_note = agent.note; } };
+  // registry corrections, move-outs and removals — demo dataset
+  updateUnit = async (_b, unitId, patch) => { const u = DS.units.find((x) => x.id === unitId); if (u) Object.assign(u, patch); };
+  updateUnitPerson = async (_b, pid, patch) => { const x = DS.people.find((p) => p.id === pid); if (x) Object.assign(x, patch); };
+  moveOutUnitPerson = async (_b, pid, moveOut) => { const x = DS.people.find((p) => p.id === pid); if (x) { x.is_current = false; x.move_out = moveOut || new Date().toISOString().slice(0, 10); } };
+  restoreUnitPerson = async (_b, pid) => { const x = DS.people.find((p) => p.id === pid); if (x) { x.is_current = true; x.move_out = null; } };
+  moveOutUnitPeopleOfType = async (_b, unitId, personType, moveOut) => {
+    const hit = DS.people.filter((p) => p.unit_id === unitId && p.person_type === personType && p.is_current !== false);
+    hit.forEach((p) => { p.is_current = false; p.move_out = moveOut || new Date().toISOString().slice(0, 10); });
+    return hit.length;
+  };
+  deleteUnitPerson = async (_b, pid) => { const i = DS.people.findIndex((p) => p.id === pid); if (i > -1) DS.people.splice(i, 1); };
+  updateUnitPet = async (_b, pid, patch) => { const x = DS.pets.find((p) => p.id === pid); if (x) Object.assign(x, patch); };
+  deleteUnitPet = async (_b, pid) => { const i = DS.pets.findIndex((p) => p.id === pid); if (i > -1) DS.pets.splice(i, 1); };
+  updateUnitVehicle = async (_b, vid, patch) => { const x = DS.vehicles.find((v) => v.id === vid); if (x) Object.assign(x, patch); };
+  deleteUnitVehicle = async (_b, vid) => { const i = DS.vehicles.findIndex((v) => v.id === vid); if (i > -1) DS.vehicles.splice(i, 1); };
+  updateAccessItem = async (_b, aid, patch) => { const x = DS.access.find((a) => a.id === aid); if (x) Object.assign(x, patch); };
+  deleteAccessItem = async (_b, aid) => { const i = DS.access.findIndex((a) => a.id === aid); if (i > -1) DS.access.splice(i, 1); };
+  updateUnitBreach = async (_b, bid2, patch) => { const x = DS.breaches.find((b) => b.id === bid2); if (x) Object.assign(x, patch); };
+  deleteUnitBreach = async (_b, bid2) => { const i = DS.breaches.findIndex((b) => b.id === bid2); if (i > -1) DS.breaches.splice(i, 1); };
   // Correspondence Hub — demo dataset (sample threads; sending & replies simulated, no real email)
   listCorrThreads = async () => [...DS.corr.threads].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1)).map((t) => ({ id: t.id, subject: t.subject, status: t.status, visibility: t.visibility, contextType: t.contextType, contextId: t.contextId, lastActivityAt: t.lastActivityAt, createdAt: t.createdAt, contact: t.contact ? { name: t.contact.name, email: t.contact.email, org: t.contact.org, partyType: t.contact.partyType } : null }));
   getCorrThread = async (tid) => { const t = DS.corr.threads.find((x) => x.id === tid); if (!t) return { thread: null, messages: [] }; return { thread: { id: t.id, buildingId: t.buildingId, subject: t.subject, status: t.status, visibility: t.visibility, contextType: t.contextType, contextId: t.contextId, createdBy: t.createdBy, createdAt: t.createdAt, lastActivityAt: t.lastActivityAt, contact: t.contact }, messages: [...t.messages].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)) }; };
