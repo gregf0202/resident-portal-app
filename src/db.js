@@ -321,10 +321,10 @@ export async function loadDisputes(bid) {
   return ds.map((d) => ({ id: d.id, buildingId: bid, ref: d.ref, openedAt: (d.created_at || "").slice(0, 10), ...(d.data || {}), events: byDispute[d.id] || [] }));
 }
 
-export async function createDispute(bid, title, byLabel, category) {
+export async function createDispute(bid, title, byLabel, category, unitId) {
   const { count } = await supabase.from("disputes").select("id", { count: "exact", head: true }).eq("building_id", bid);
   const ref = "DISP-" + String((count || 0) + 1).padStart(4, "0");
-  const { data: ins, error } = await supabase.from("disputes").insert({ building_id: bid, ref, data: { title, status: "complaint", category: category || "Other" } }).select("id").single();
+  const { data: ins, error } = await supabase.from("disputes").insert({ building_id: bid, ref, unit_id: unitId || null, data: { title, status: "complaint", category: category || "Other" } }).select("id").single();
   if (error) throw error;
   const { error: e2 } = await supabase.from("dispute_events").insert({ dispute_id: ins.id, building_id: bid, data: { type: "stage", by: byLabel, text: "Complaint received and logged." } });
   if (e2) throw e2;
@@ -658,6 +658,16 @@ export async function updateMotionConditions(motionId, conditions) {
   if (ge) throw ge;
   const { error } = await supabase.from("motions").update({ details: { ...(m.details || {}), conditions } }).eq("id", motionId).eq("status", "open");
   if (error) throw error;
+}
+// Conditions of Approval are versioned. Amending an open motion snapshots the previous
+// conditions plus every vote cast against them into motion.details.history, bumps
+// motion.version, sets the live votes aside (so members vote again on what they can now
+// see) and alerts the BCC. Any BCC member may amend; a reason is mandatory. Runs as one
+// server-side RPC so a half-applied amendment is impossible.
+export async function amendMotionConditions(motionId, conditions, reason, authorName) {
+  const { data, error } = await supabase.rpc("amend_motion_conditions", { p_motion_id: motionId, p_conditions: conditions, p_reason: reason, p_author_name: authorName || null });
+  if (error) throw error;
+  return data;
 }
 export async function withdrawMotion(id) {
   const { error } = await supabase.from("motions").update({ status: "withdrawn", decided_at: new Date().toISOString() }).eq("id", id).eq("status", "open");
@@ -1213,11 +1223,12 @@ if (DEMO_MODE) {
     appAtts: [{ id: id(), application_id: "app-3", file_name: "bathroom-quote-AquaBuild.pdf", file_kind: "document", storage_path: "demo/quote1" }],
     permits: [{ id: "permit-1", application_id: "app-2", permit_no: "PP-0007", unit_number: "12", vehicle_make: "Mazda", vehicle_model: "CX-5", vehicle_colour: "Blue", vehicle_rego: "456XYZ", date_from: dAhead(-20), date_to: dAhead(345), approval_date: dAhead(-19), status: "active" }],
     motions: [
-      { id: "mo-1", title: "Approve: Pet approval — Luna (ragdoll cat)", description: "Indoor cat, desexed and microchipped.", context_type: "application", context_id: "app-1", details: { category: "pet", unit: "12", conditions: ["The animal must be kept within the lot and under control on common property at all times.", "The animal must not cause nuisance, noise or interference with other residents.", "All animal waste must be removed and disposed of appropriately.", "Approval is specific to the animal named in the application and is not transferable."] }, eligible_count: 6, threshold: 4, status: "open", opened_by: "u-owner", opened_at: daysAgo(1), outcome_note: null },
+      { id: "mo-1", title: "Approve: Pet approval — Luna (ragdoll cat)", description: "Indoor cat, desexed and microchipped.", context_type: "application", context_id: "app-1", details: { category: "pet", unit: "12", conditions: ["The animal must be kept within the lot and under control on common property at all times.", "The animal must not cause nuisance, noise or interference with other residents.", "All animal waste must be removed and disposed of appropriately.", "Approval is specific to the animal named in the application and is not transferable.", "The animal must be registered with council where registration is required."],
+        history: [{ version_from: 1, version_to: 2, conditions_before: ["The animal must be kept within the lot and under control on common property at all times.", "The animal must not cause nuisance, noise or interference with other residents.", "All animal waste must be removed and disposed of appropriately.", "Approval is specific to the animal named in the application and is not transferable."], conditions_after: ["The animal must be kept within the lot and under control on common property at all times.", "The animal must not cause nuisance, noise or interference with other residents.", "All animal waste must be removed and disposed of appropriately.", "Approval is specific to the animal named in the application and is not transferable.", "The animal must be registered with council where registration is required."], reason: "Priya asked whether the cat is council-registered. The owner confirmed it is, so the approval should say so.", by: "Marcus Chen (Chair)", by_user_id: "u-bcc2", at: daysAgo(1), superseded_votes: [{ id: "sv-1", motion_id: "mo-1", voter_user_id: "u-bcc2", vote: "yes", comment: "Lovely quiet breed.", version: 1, created_at: daysAgo(2) }] }] },
+        version: 2, eligible_count: 6, threshold: 4, status: "open", opened_by: "u-owner", opened_at: daysAgo(2), outcome_note: null },
       { id: "mo-2", title: "Accept Bright Spark quote $2,350 — Car park gate motor", description: "Gate sticks halfway with grinding noise. Sub-committee recommends preferred electrician.", context_type: "maintenance", context_id: "m-demo", details: { quote_id: "q-1", attachments: [{ name: "Bright-Spark-quote.txt", type: "text/plain", data: "data:text/plain;charset=utf-8," + encodeURIComponent("QUOTE — Bright Spark Electrical\nCar park gate motor replacement (supply + install)\nTotal: $2,350 incl GST\nValid 30 days · Licence QLD-EL-12345") }], trail: ["triage: High priority — gate could fail closed. Owen coordinating quotes.", "quote added: Quote from Bright Spark Electrical: $2350", "quote added: Quote from GateWorks QLD: $3100", "recommendation: Sub-committee recommends Bright Spark (preferred, 5-star)."] }, eligible_count: 6, threshold: 4, status: "passed", opened_by: DEMO_UID, opened_at: daysAgo(6), decided_at: daysAgo(4), outcome_note: "4 yes / 1 no / 1 abstained of 6 members" },
     ],
     votes: [
-      { id: id(), motion_id: "mo-1", voter_user_id: "u-bcc2", vote: "yes", comment: "Lovely quiet breed.", created_at: daysAgo(1) },
       { id: id(), motion_id: "mo-1", voter_user_id: "u-bcc3", vote: "yes", comment: null, created_at: daysAgo(0) },
       { id: id(), motion_id: "mo-2", voter_user_id: "u-bcc2", vote: "yes", comment: "Preferred contractor, fair price.", created_at: daysAgo(5) },
       { id: id(), motion_id: "mo-2", voter_user_id: "u-bcc3", vote: "yes", comment: null, created_at: daysAgo(5) },
@@ -1239,7 +1250,8 @@ if (DEMO_MODE) {
     ],
     walkItems: [], walks: [{ id: "walk-1", walk_date: dAhead(-31), attendees: "B Manager (BM), Betty Nguyen (Chair)", status: "completed", summary: "22/22 checked · 1 issue" }], walkResults: { "walk-1": [] },
     notifications: [
-      { id: id(), kind: "motion_opened", ref_table: "motions", ref_id: "mo-1", title: "Vote required: Approve: Pet approval — Luna", body: "Majority needed: 4 of 6 BCC members.", read_at: null, created_at: daysAgo(1) },
+      { id: id(), kind: "motion_amended", ref_table: "motions", ref_id: "mo-1", title: "Conditions amended, please vote again: Approve: Pet approval — Luna", body: "Now v2. 1 earlier vote set aside. Reason: council registration condition added after Priya's question.", read_at: null, created_at: daysAgo(1) },
+      { id: id(), kind: "motion_opened", ref_table: "motions", ref_id: "mo-1", title: "Vote required: Approve: Pet approval — Luna", body: "Majority needed: 4 of 6 BCC members.", read_at: daysAgo(1), created_at: daysAgo(2) },
       { id: id(), kind: "application_submitted", ref_table: "applications", ref_id: "app-1", title: "Application awaiting review", body: "Pet approval — Luna (ragdoll cat) requires a decision", read_at: null, created_at: daysAgo(1) },
       { id: id(), kind: "motion_decided", ref_table: "motions", ref_id: "mo-2", title: "Motion passed: Accept Bright Spark quote $2,350", body: "4 yes / 1 no / 1 abstained of 6 members", read_at: daysAgo(3), created_at: daysAgo(4) },
       { id: id(), kind: "maintenance_reported", ref_table: "maintenance", ref_id: "m-demo", title: "New issue: Car park gate motor failing", body: "Gate sticks halfway, grinding noise.", read_at: daysAgo(5), created_at: daysAgo(6) },
@@ -1375,7 +1387,7 @@ if (DEMO_MODE) {
     const aid = id();
     DS.applications.unshift({ id: aid, unit_id: unitId, kind, category, title, details, status: "submitted", submitted_by: DEMO_UID, submitted_at: now() });
     if (kind === "application" && ["pet", "lot_improvement", "keys_access", "other"].includes(category)) {
-      DS.motions.unshift({ id: id(), title: "Approve: " + (title || category), description: details.description || "", context_type: "application", context_id: aid, details: { category, unit: details.unit, conditions: ["Approval is subject to compliance with the scheme's by-laws.", "The committee may attach further reasonable conditions before final sign-off."] }, eligible_count: 6, threshold: 4, status: "open", opened_by: DEMO_UID, opened_at: now() });
+      DS.motions.unshift({ id: id(), title: "Approve: " + (title || category), description: details.description || "", context_type: "application", context_id: aid, details: { category, unit: details.unit, conditions: ["Approval is subject to compliance with the scheme's by-laws.", "The committee may attach further reasonable conditions before final sign-off."] }, version: 1, eligible_count: 6, threshold: 4, status: "open", opened_by: DEMO_UID, opened_at: now() });
       DS.notifications.unshift({ id: id(), kind: "motion_opened", ref_table: "motions", ref_id: aid, title: "Vote required: Approve: " + (title || category), body: "Majority needed: 4 of 6 BCC members.", read_at: null, created_at: now() });
     } else {
       DS.notifications.unshift({ id: id(), kind: "application_submitted", ref_table: "applications", ref_id: aid, title: (kind === "booking" ? "Booking" : "Application") + " awaiting review", body: (title || category) + " requires a decision", read_at: null, created_at: now() });
@@ -1402,6 +1414,20 @@ if (DEMO_MODE) {
   listMotionComments = async () => [...DS.mcomments];
   addMotionComment = async (mid, body, authorName) => { DS.mcomments.push({ id: id(), motion_id: mid, body, author_name: authorName, created_at: now() }); };
   updateMotionConditions = async (mid, conditions) => { const m = DS.motions.find((x) => x.id === mid); if (m) m.details = { ...(m.details || {}), conditions }; };
+  amendMotionConditions = async (mid, conditions, reason, authorName) => {
+    const m = DS.motions.find((x) => x.id === mid);
+    if (!m || m.status !== "open") throw new Error("Only an open motion can be amended");
+    if (!reason || !String(reason).trim()) throw new Error("A reason for the amendment is required");
+    const before = (m.details && m.details.conditions) || [];
+    const fromV = m.version || 1, toV = fromV + 1;
+    const superseded = DS.votes.filter((v) => v.motion_id === mid).map((v) => ({ ...v, version: fromV }));
+    DS.votes = DS.votes.filter((v) => v.motion_id !== mid);
+    const entry = { version_from: fromV, version_to: toV, conditions_before: before, conditions_after: conditions, reason: String(reason).trim(), by: authorName || "Committee member", by_user_id: DEMO_UID, at: now(), superseded_votes: superseded };
+    m.version = toV;
+    m.details = { ...(m.details || {}), conditions, history: [...((m.details && m.details.history) || []), entry] };
+    DS.notifications.unshift({ id: id(), kind: "motion_amended", ref_table: "motions", ref_id: mid, title: "Conditions amended, please vote again: " + m.title, body: `Now v${toV}. ${superseded.length} earlier vote${superseded.length === 1 ? "" : "s"} set aside. Reason: ${entry.reason}`, read_at: null, created_at: now() });
+    return { version: toV, superseded: superseded.length };
+  };
   createMotion = async (_b, _u, m) => { const mid = id(); DS.motions.unshift({ id: mid, eligible_count: 6, threshold: 4, status: "open", opened_at: now(), opened_by: DEMO_UID, outcome_note: null, ...m }); return mid; };
   castVote = async (mid, uid, vote, comment, proxy) => {
     DS.votes.push({ id: id(), motion_id: mid, voter_user_id: uid || DEMO_UID, vote, comment: comment || null, proxy_for_user_id: proxy ? proxy.principal_user_id : null, proxy_appointment_id: proxy ? proxy.id : null, created_at: now() });
@@ -1410,7 +1436,7 @@ if (DEMO_MODE) {
       const vs = DS.votes.filter((v) => v.motion_id === mid);
       const yes = vs.filter((v) => v.vote === "yes").length, no = vs.filter((v) => v.vote === "no").length;
       if (yes >= m.threshold) { m.status = "passed"; m.decided_at = now(); m.outcome_note = `${yes} yes / ${no} no / ${vs.length - yes - no} abstained of ${m.eligible_count} members`;
-        if (m.context_type === "application") decideApplication(null, m.context_id, true, "Decided by BCC vote: " + m.outcome_note + (m.details && m.details.conditions ? " — approval subject to the attached conditions" : ""));
+        if (m.context_type === "application") decideApplication(null, m.context_id, true, "Decided by BCC vote: " + m.outcome_note + (m.details && m.details.conditions ? ` — approval subject to the attached conditions (v${m.version || 1})` : ""));
         if (m.context_type === "application") { const a = DS.applications.find((x) => x.id === m.context_id); if (a && m.details && m.details.conditions) a.details = { ...a.details, conditions: m.details.conditions }; }
       } else if (yes + (m.eligible_count - vs.length) < m.threshold) { m.status = "failed"; m.decided_at = now(); m.outcome_note = `${yes} yes / ${no} no of ${m.eligible_count} members — majority not achievable`; if (m.context_type === "application") decideApplication(null, m.context_id, false, "Decided by BCC vote: " + m.outcome_note); }
     }
