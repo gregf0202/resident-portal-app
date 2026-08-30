@@ -528,6 +528,20 @@ existed, and `unit_people` had `move_in` / `move_out` / `is_current` / `notes` u
 - **Known gap:** building managers (`role='manager'`) are not `is_committee`, so they cannot edit
   the register they most often maintain. Deliberate for now; see the Feature Register.
 
+### v0.29.1 — Unit Search discovery
+
+`listUnitsOverview(bid)` in `db.js`: units + current `unit_people` + pet/vehicle/key counts in
+five queries, returning `{...unit, owners[], tenants[], others[], pets, vehicles, keys}`.
+Demo-shimmed from `DS`. `UnitSearchView` renders it as a browsable list, filtered client-side by
+unit number or resident name; `run()` resolves a name to a unit when it matches exactly one.
+
+**The bug this fixed is worth remembering.** The unit list was loaded inside
+`useEffect(() => { if (backend) listUnits(...) })`. `backend` is not part of the `ctx` object
+built in this file — the production shell supplies it — so on the demo build it is falsy and the
+effect never ran. Unit Search opened as an empty search box with no indication the building had
+any units. Any data loading gated on `backend` should be checked against the demo path: the demo
+shims answer nearly every db function, so the guard is usually unnecessary and actively harmful.
+
 ### v0.29.0 demo dataset
 
 `db.js` `DEMO_MODE` block: `DEMO_UNITS` / `DEMO_PEOPLE` / `DEMO_PAST` / `DEMO_PETS` /

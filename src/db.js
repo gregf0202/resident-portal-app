@@ -422,6 +422,33 @@ export async function listUnits(bid) {
   if (error) throw error;
   return data || [];
 }
+// One browsable view of the whole building: every unit with who lives there and
+// what is on record. Unit Search previously demanded you already knew a unit
+// number, which is fine for a manager and useless for anyone discovering it.
+export async function listUnitsOverview(bid) {
+  const { data: units, error } = await supabase.from("units")
+    .select("id, unit_number, lot_number, parking_spaces, agent_business, notes")
+    .eq("building_id", bid).order("unit_number");
+  if (error) throw error;
+  const ids = (units || []).map((u) => u.id);
+  if (!ids.length) return [];
+  const [ppl, pets, veh, keys] = await Promise.all([
+    supabase.from("unit_people").select("unit_id, person_type, full_name, is_current").in("unit_id", ids),
+    supabase.from("unit_pets").select("unit_id").in("unit_id", ids),
+    supabase.from("unit_vehicles").select("unit_id").in("unit_id", ids),
+    supabase.from("unit_access_items").select("unit_id").eq("building_id", bid),
+  ]);
+  const count = (rows) => (rows.data || []).reduce((m, r) => { m[r.unit_id] = (m[r.unit_id] || 0) + 1; return m; }, {});
+  const nPets = count(pets), nVeh = count(veh), nKeys = count(keys);
+  const byUnit = {};
+  (ppl.data || []).forEach((r) => { if (r.is_current === false) return; (byUnit[r.unit_id] = byUnit[r.unit_id] || []).push(r); });
+  return units.map((u) => {
+    const people = byUnit[u.id] || [];
+    const pick = (t) => people.filter((p) => p.person_type === t).map((p) => p.full_name);
+    return { ...u, owners: pick("owner"), tenants: pick("tenant"), others: pick("property_manager").concat(pick("emergency_contact")),
+      pets: nPets[u.id] || 0, vehicles: nVeh[u.id] || 0, keys: nKeys[u.id] || 0 };
+  });
+}
 export async function createUnit(bid, unit_number, lot_number, parking_spaces) {
   const { error } = await supabase.from("units").insert({ building_id: bid, unit_number, lot_number: lot_number || null, parking_spaces: Number(parking_spaces) || 0 });
   if (error) throw error;
@@ -1463,6 +1490,17 @@ if (DEMO_MODE) {
   getDocumentFile = async () => null;
   getGalleryImages = async () => ({});
   // sorted the way the live query orders them, so the chip row reads naturally
+  listUnitsOverview = async () => {
+    const n = (arr, uid) => arr.filter((x) => x.unit_id === uid).length;
+    return [...DS.units]
+      .sort((a, b) => String(a.unit_number).localeCompare(String(b.unit_number), undefined, { numeric: true }))
+      .map((u) => {
+        const people = DS.people.filter((p) => p.unit_id === u.id && p.is_current !== false);
+        const pick = (t) => people.filter((p) => p.person_type === t).map((p) => p.full_name);
+        return { ...u, owners: pick("owner"), tenants: pick("tenant"), others: pick("property_manager").concat(pick("emergency_contact")),
+          pets: n(DS.pets, u.id), vehicles: n(DS.vehicles, u.id), keys: n(DS.access, u.id) };
+      });
+  };
   listUnits = async () => [...DS.units].sort((a, b) => String(a.unit_number).localeCompare(String(b.unit_number), undefined, { numeric: true }));
   createUnit = async (_b, unit_number, lot_number, parking_spaces) => { DS.units.push({ id: id(), unit_number, lot_number, parking_spaces: Number(parking_spaces) || 0 }); };
   addUnitPerson = async (_b, unitId, row) => { DS.people.push({ id: id(), unit_id: unitId, is_current: true, ...row }); };
