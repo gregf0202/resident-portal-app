@@ -528,6 +528,28 @@ existed, and `unit_people` had `move_in` / `move_out` / `is_current` / `notes` u
 - **Known gap:** building managers (`role='manager'`) are not `is_committee`, so they cannot edit
   the register they most often maintain. Deliberate for now; see the Feature Register.
 
+### v0.29.2 — audit pass (31 Aug 2026)
+
+Findings and fixes: `createDispute` called from `UnitSearchView` with no `DEMO_MODE` shim (now
+branches on `backend`, demo writes to `store.disputes` with a `unit` field and Unit Search merges
+them); a `<Btn>` nested inside a row `<button>` in `Documents` (row converted to
+`role="button"` div with `onKeyDown`); three submit handlers with bare `if (!x) return;` and no
+feedback (`Messaging.send`, `ApplicationsBookings.book`, `Documents.upload`).
+
+**Three checks worth keeping as a habit, since each caught a real class of fault:**
+1. *db functions called from the UI but absent from the `DEMO_MODE` block* — anything unguarded by
+   `backend` will fail on demo.
+2. *Nested interactive elements* — `<button>`/`<Btn>` inside another `<button>`.
+3. *Bare `return` in a handler wired to `onClick`* — the button appears dead to the user.
+
+**Testing note.** Three separate "findings" during the audit were the harness lying, not the app:
+an `update()` that mutated without re-rendering made every Settings field look broken (43 false
+positives); a fuzzer holding stale DOM references after opening five edit forms at once made the
+Key & Fob form look broken; and stubbed `docx`/`URL.createObjectURL` made exports look like they
+produced empty files. A harness must mirror the real App shell (store in React state, `update`
+clones and re-renders), re-query nodes after every state change, and use the real `docx` library
+before any export conclusion is drawn.
+
 ### v0.29.1 — Unit Search discovery
 
 `listUnitsOverview(bid)` in `db.js`: units + current `unit_people` + pet/vehicle/key counts in
