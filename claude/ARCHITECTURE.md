@@ -528,6 +528,32 @@ existed, and `unit_people` had `move_in` / `move_out` / `is_current` / `notes` u
 - **Known gap:** building managers (`role='manager'`) are not `is_committee`, so they cannot edit
   the register they most often maintain. Deliberate for now; see the Feature Register.
 
+### v0.30.0 — update delivery (31 Aug 2026)
+
+**Confirmed against the live site (demo.nalohub.com, via browser):** no service worker registered,
+no Cache Storage, `manifest.webmanifest` linked with `display: standalone` plus
+`apple-mobile-web-app-capable`. Netlify served *everything* `public,max-age=0,must-revalidate`,
+including the content-hashed assets.
+
+Consequence: a page load always gets the newest build, but nothing triggers a load. Sign-in does
+not reload. A standalone iOS install has no address bar and no pull-to-refresh, so the only user
+remedy was force-quitting.
+
+- `vite.config.js`: `versionStamp()` plugin emits `dist/version.json`
+  (`{version, build, builtAt}`) via `emitFile` in `generateBundle`, and `define` injects
+  `__BUILD_ID__` / `__APP_VERSION__`. The version is **read from `PLATFORM.version` in
+  `src/ResidentPortal.jsx`** by regex, so that line stays the single source of truth and
+  `package.json`'s stale `0.1.0` is deliberately not used.
+- `ResidentPortal.jsx`: `UpdateBanner` (rendered inside `AppCtx.Provider`) fetches
+  `/version.json?t=…` with `cache:"no-store"` on mount, on `focus`, on `visibilitychange`, and
+  every 15 min; shows a dismissible banner when `build !== __BUILD_ID__`. Never auto-reloads.
+  Fails silently (offline, 404, dev where `__BUILD_ID__` is undefined → `"dev"`, which skips).
+- `netlify.toml`: `no-store` on `/version.json`, `must-revalidate` on `/index.html`,
+  `immutable` + 1 year on `/assets/*` (safe — Vite content-hashes those filenames).
+
+If a service worker is ever added, this banner must also hook `registration.updatefound` /
+`waiting` and call `skipWaiting`, or the reload will serve the cached old build.
+
 ### v0.29.2 — audit pass (31 Aug 2026)
 
 Findings and fixes: `createDispute` called from `UnitSearchView` with no `DEMO_MODE` shim (now
