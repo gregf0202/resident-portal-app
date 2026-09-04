@@ -2,9 +2,10 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-08-08 · App version: v0.25.0 (By-law display fixes + NaloPilot reads the building's by-laws). Nothing pending.
-> Note: v0.22.0 (minute-ready Maintenance Report + historical maintenance entry) and the
-> 5MB upload cap shipped without a doc update — both are now recorded below.
+> Last updated: 2026-09-04 · App version: v0.31.0 (sign-in code alongside the magic link +
+> usage analytics Layer 1). Nothing pending.
+> Note: the header line had been stale since 2026-08-08 (it still read v0.25.0) while the body
+> was kept current through v0.30.0. Corrected here; the header moves with every release.
 >
 > _A synced copy of this doc lives in the NaloHub Claude Project so every new chat starts
 > with current context._
@@ -527,6 +528,85 @@ existed, and `unit_people` had `move_in` / `move_out` / `is_current` / `notes` u
   Legacy `store.keyfobs` rows merged into the keys section stay read-only (no id in the new table).
 - **Known gap:** building managers (`role='manager'`) are not `is_committee`, so they cannot edit
   the register they most often maintain. Deliberate for now; see the Feature Register.
+
+### v0.31.0 — sign-in code + usage analytics Layer 1 (4 Sep 2026)
+
+Two streams built together, released as one deploy because both are small and both touch the
+first minute of a person's day. Four files: `src/db.js`, `src/App.jsx`,
+`src/components/SignIn.jsx`, and the version line in `src/ResidentPortal.jsx`.
+
+**(a) Sign-in code.** The Magic Link email template gained `{{ .Token }}` beneath the existing
+`{{ .ConfirmationURL }}` link. `SignIn.jsx`'s post-send panel now offers a code field calling
+`supabase.auth.verifyOtp({ email, token, type: "email" })`, plus a resend and a line naming the
+sender and pointing at Junk / Outlook's Other tab.
+
+- **Code length is NOT hardcoded.** GoTrue's OTP length is a project setting
+  (Authentication → Email), 6 on some projects and 8 on others depending on provisioning.
+  The first draft of this checked `length !== 6`; the project was emitting 8, so every real
+  code would have been rejected by our own screen with a message contradicting the email.
+  Caught before deploy. The field accepts `CODE_MIN=6` to `CODE_MAX=10` and lets Supabase judge.
+  **Do not "tidy" this back to 6.**
+- The `verifyOtp` failure path maps expired/invalid to plain English; the resend path maps
+  GoTrue's "For security purposes, you can only request this after N seconds" to a stated pause,
+  extracting N when present. Raw auth errors read as faults to someone already locked out.
+- Auth settings at time of release: **OTP length 6, OTP expiry 1800s (30 min), resend gap 60s.**
+  Expiry governs the link and the code together — they are the same token. Minimum password
+  length is 8 and applies only to platform admins (the password path is admin-only).
+
+**(b) Usage analytics Layer 1 — app half.** The database half shipped 3 Sep (below).
+
+- `logActivity(buildingId, role)` in `db.js`, above the DEMO MODE block, modelled on `audit()`:
+  fire-and-forget, never blocks a building open. Guarded on both `VITE_SUPABASE_URL` and
+  `VITE_DEMO_MODE`. A module-level `Set` de-dupes within a page load; the unique index is the
+  real guard. Records a coarse `mobile`/`desktop` hint from the UA into `activity_events.device`.
+- **`user_id` must be `auth.uid()`,** read from `getSession()`, not the app store's user id —
+  the insert policy is `user_id = auth.uid() AND is_member(building_id)` and the two ids differ.
+- The `App.jsx` hook sits **with the other effects, above the early returns**, because `user`
+  is derived at render below them and hooks cannot be conditional. It resolves the role from
+  `store.users` by `userId` and depends on `[buildingId, userId]` only, so a `store` change
+  from an autosave does not re-fire it.
+- Verified in production 4 Sep: two rows, correct role, correct Brisbane day, `desktop` and
+  `mobile` both recorded.
+
+### Security: `internal_email_token()` exposure closed (4 Sep 2026)
+
+Found by `get_advisors(security)` while checking auth settings, then **confirmed by testing as
+the `anon` role rather than assumed**: `public.internal_email_token()` is SECURITY DEFINER, reads
+`vault.decrypted_secrets`, has **no guard in its body**, and `anon` held EXECUTE — so it was
+callable at `/rest/v1/rpc/internal_email_token` by anyone holding the publishable key, which ships
+in the browser bundle. It returned the 64-character secret.
+
+```sql
+revoke execute on function public.internal_email_token() from public, anon, authenticated;
+revoke execute on function public.report_activity(p_from date, p_to date) from public, anon;
+revoke execute on function public.report_actions(p_from date, p_to date) from public, anon;
+```
+
+`service_role` retains EXECUTE, so server-side callers are unaffected. Re-tested as `anon`:
+permission denied. The two report functions already guarded internally with `is_platform_admin()`
+so nothing leaked through them; the revoke is defence in depth, and was intended on 3 Sep but
+never landed.
+
+**Standing rule this reinforces:** a `SECURITY DEFINER` function that touches the vault or any
+secret must have both an internal guard **and** a revoke. Neither alone. Run `get_advisors` after
+any DDL.
+
+### Usage analytics Layer 1 — database half (3 Sep 2026)
+
+Applied to prod 3 Sep; the app half above did not ship until 4 Sep, which is why
+`activity_events` sat empty in between.
+
+- `activity_events(id, building_id, user_id, role, kind, device, occurred_at, day)`.
+  `day` defaults to `(now() AT TIME ZONE 'Australia/Brisbane')::date`; unique index
+  `activity_events_daily_uniq (building_id, user_id, kind, day)` makes active-days the native
+  unit and keeps the table tiny.
+- RLS: insert `user_id = auth.uid() AND is_member(building_id)`; select `is_platform_admin()`
+  only. Committees never see individual login times.
+- `report_activity(from, to)` (presence per building per role) and `report_actions(from, to)`
+  (audit_log with `building.settings_updated` autosave noise stripped), both SECURITY DEFINER
+  with the admin check inside, defaulting to the last 7 Brisbane days.
+- Buildings with `data->>'internal' = 'true'` (SeaHaven + the 7 state reference shells, 8 in
+  total) are excluded from both reports.
 
 ### v0.30.0 — update delivery (31 Aug 2026)
 
