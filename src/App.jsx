@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient.js";
 import SignIn from "./components/SignIn.jsx";
 import PlatformConsole from "./components/PlatformConsole.jsx";
-import { AppCtx, BuildingApp, Toast, themeById } from "./ResidentPortal.jsx";
+import { AppCtx, BuildingApp, Toast, themeById, UpdateBanner } from "./ResidentPortal.jsx";
 import AddToHomeScreen from "./components/AddToHomeScreen.jsx";
 import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange, loadInvoices, loadPlatformSettings, logActivity } from "./db.js";
 import { downloadInvoicePdf } from "./invoicePdf.js";
@@ -133,6 +133,10 @@ export default function App() {
       <div style={{ background: `linear-gradient(165deg, ${T.appBg}, ${T.appBg2})`, color: T.text, minHeight: "100vh", fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }}>
         <BuildingApp />
         <Toast />
+        {/* Offers a Refresh when the server reports a newer build. Lives here, not
+            in ResidentPortal's default export, because that root is the demo app
+            only — production mounts BuildingApp directly and would never see it. */}
+        <UpdateBanner />
         <AddToHomeScreen building={building} />
       </div>
     </AppCtx.Provider>
