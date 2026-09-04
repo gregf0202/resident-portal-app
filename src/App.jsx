@@ -4,7 +4,7 @@ import SignIn from "./components/SignIn.jsx";
 import PlatformConsole from "./components/PlatformConsole.jsx";
 import { AppCtx, BuildingApp, Toast, themeById } from "./ResidentPortal.jsx";
 import AddToHomeScreen from "./components/AddToHomeScreen.jsx";
-import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange, loadInvoices, loadPlatformSettings } from "./db.js";
+import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange, loadInvoices, loadPlatformSettings, logActivity } from "./db.js";
 import { downloadInvoicePdf } from "./invoicePdf.js";
 
 const KEYFRAMES = `
@@ -72,6 +72,17 @@ export default function App() {
     return () => { cancelled = true; };
     // eslint-disable-next-line
   }, [session]);
+
+  // Usage analytics Layer 1: one row per person, per building, per Brisbane day.
+  // Must live up here with the other hooks, above the early returns below, so it
+  // runs on every render path. `store.users` carries the role; logActivity itself
+  // reads auth.uid() and de-duplicates, so this is safe to fire on every open.
+  useEffect(() => {
+    if (!buildingId || !userId) return;
+    const me = store && store.users ? store.users.find((u2) => u2.id === userId) : null;
+    logActivity(buildingId, me ? me.role : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildingId, userId]);
 
   const enterBuilding = async (bid) => {
     setMode("boot"); setErr("");

@@ -1208,6 +1208,42 @@ export async function savePlatformSettings(d) {
   if (error) throw error;
 }
 
+// ---- usage analytics (Layer 1) -----------------------------------------
+// One row per person, per building, per Brisbane-local day, when they OPEN a
+// building. We measure opens rather than sign-ins because Supabase sessions
+// persist for weeks, so a single login can hide a month of daily use.
+//
+// The DB stamps `day` itself and a unique index on
+// (building_id, user_id, kind, day) makes the second call of the day a no-op:
+// it fails with a duplicate-key error, which we swallow. `user_id` must be
+// auth.uid() to satisfy the insert policy, so we read it from the session
+// rather than from the app's store id. Reads are platform-admin only, by
+// policy: committees never see individual login times.
+//
+// Fire-and-forget, exactly like audit() — analytics must never block, slow or
+// break a building open. Silent no-op in demo mode.
+const _loggedThisSession = new Set();
+
+export async function logActivity(buildingId, role = null) {
+  try {
+    if (!import.meta.env.VITE_SUPABASE_URL || !buildingId) return;
+    if (String(import.meta.env.VITE_DEMO_MODE || "").toLowerCase() === "true") return;
+    const { data } = await supabase.auth.getSession();
+    const uid = data && data.session && data.session.user ? data.session.user.id : null;
+    if (!uid) return;
+    const key = buildingId + "|" + uid;
+    if (_loggedThisSession.has(key)) return;
+    _loggedThisSession.add(key);
+    // Coarse device hint only: tells us whether someone has ever opened their
+    // building on a phone, which is the signal behind most onboarding help.
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+    const device = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) ? "mobile" : "desktop";
+    supabase.from("activity_events")
+      .insert({ building_id: buildingId, user_id: uid, role: role || null, kind: "building.open", device })
+      .then(() => {}, () => {});
+  } catch (e) { /* never block the UI on analytics */ }
+}
+
 // ============================================================================
 // DEMO MODE — demo.nalohub.com runs this same file with VITE_DEMO_MODE=true.
 // Every new-feature function below is re-bound to an in-memory dummy dataset,

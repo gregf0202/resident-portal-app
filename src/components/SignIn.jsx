@@ -11,6 +11,10 @@ export default function SignIn() {
   const [busy, setBusy] = useState(false);
   const [usePw, setUsePw] = useState(false);
   const [pw, setPw] = useState("");
+  // Six-digit code alternative to the link (same email, same one-time token).
+  const [code, setCode] = useState("");
+  const [codeErr, setCodeErr] = useState("");
+  const [resent, setResent] = useState(false);
 
   const signInPw = async () => {
     if (!email.trim() || !pw) return;
@@ -32,6 +36,52 @@ export default function SignIn() {
     });
     setBusy(false);
     if (error) setErr(error.message); else setSent(true);
+  };
+
+  // Verify the numeric code printed in the sign-in email. Works on whichever
+  // device the person types it on, so the phone/laptop mix-up goes away.
+  //
+  // Deliberately NOT hardcoded to six digits: GoTrue's OTP length is a project
+  // setting (Authentication > Email), commonly 6 but 8 on some projects, and it
+  // can be changed later. A length check here that disagrees with the email is
+  // the worst kind of bug — it rejects a perfectly valid credential at our own
+  // front door and tells the person the wrong thing. Accept anything in the
+  // range GoTrue can emit and let Supabase be the judge.
+  const CODE_MIN = 6, CODE_MAX = 10;
+  const digits = (v) => (v || "").replace(/\D/g, "");
+
+  const signInCode = async () => {
+    const token = digits(code);
+    if (token.length < CODE_MIN) { setCodeErr("Type all the digits shown in the email."); return; }
+    setBusy(true); setCodeErr("");
+    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token, type: "email" });
+    setBusy(false);
+    if (error) {
+      const m = /expired|invalid/i.test(error.message)
+        ? "That code didn't work. Check the digits, and make sure it's from the newest email. Codes expire, so if in doubt tap Send a fresh email."
+        : error.message;
+      setCodeErr(m);
+    }
+    // On success onAuthStateChange in App.jsx takes over; nothing to do here.
+  };
+
+  // Send another link + code. Supabase enforces a 60 second gap between sends,
+  // and returns a raw message ("For security purposes, you can only request
+  // this after N seconds") that reads as a fault rather than a wait. Someone
+  // who cannot get in is already anxious, so say plainly that it is a pause.
+  const resend = async () => {
+    setBusy(true); setCodeErr(""); setResent(false);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setBusy(false);
+    if (!error) { setResent(true); setCode(""); return; }
+    const wait = /security purposes|rate limit|only request this after/i.test(error.message);
+    const secs = (error.message.match(/(\d+)\s*seconds?/i) || [])[1];
+    setCodeErr(wait
+      ? "Just a moment. We limit how often a sign-in email can be sent" + (secs ? `, so try again in about ${secs} seconds.` : ". Try again in about a minute.") + " The email already sent still works."
+      : error.message);
   };
 
   const google = async () => {
@@ -59,8 +109,35 @@ export default function SignIn() {
           </div>
           {sent ? (
             <div>
-              <p style={{ color: T.text, marginTop: 0 }}>Check your email — we've sent a sign-in link to <b>{email}</b>. Open it on this device to continue.</p>
-              <Btn kind="ghost" onClick={() => { setSent(false); setEmail(""); }} style={{ marginTop: 8 }}>Use a different email</Btn>
+              <p style={{ color: T.text, marginTop: 0 }}>Check your email. We've sent a sign-in link to <b>{email}</b>.</p>
+              <p style={{ color: T.textMuted, marginTop: 6, fontSize: 14 }}>
+                <b style={{ color: T.text }}>Two ways in:</b> tap <b>Sign in</b> in that email on this device, or type the code from the email here. The code works on any device.
+              </p>
+              <Input
+                type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code" maxLength={CODE_MAX + 2}
+                value={code} placeholder="Code from your email"
+                onChange={(e) => { setCode(e.target.value.replace(/[^0-9 ]/g, "")); setCodeErr(""); }}
+                onKeyDown={(e) => e.key === "Enter" && signInCode()}
+                style={{ marginTop: 6, letterSpacing: 4, fontSize: 20, textAlign: "center", fontVariantNumeric: "tabular-nums" }}
+              />
+              {codeErr && <div style={{ color: "#f87171", fontSize: 13, marginTop: 8 }}>{codeErr}</div>}
+              {resent && !codeErr && <div style={{ color: "#34d399", fontSize: 13, marginTop: 8 }}>A fresh email is on its way. Use the newest one; earlier links and codes no longer work.</div>}
+              <Btn onClick={signInCode} disabled={busy || digits(code).length < CODE_MIN} style={{ marginTop: 12, width: "100%" }}>
+                {busy ? "Checking…" : "Sign in with code"}
+              </Btn>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 10 }}>
+                <button onClick={resend} disabled={busy}
+                  style={{ background: "none", border: "none", color: T.textMuted, fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                  Send a fresh email
+                </button>
+                <button onClick={() => { setSent(false); setEmail(""); setCode(""); setCodeErr(""); setResent(false); }}
+                  style={{ background: "none", border: "none", color: T.textMuted, fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                  Use a different email
+                </button>
+              </div>
+              <p style={{ color: T.textMuted, fontSize: 12, marginTop: 14, marginBottom: 0 }}>
+                Can't see it? Check Junk, and in Outlook the <b>Other</b> tab. The email is from <b>Just Nalo It!</b> (noreply@send.nalohub.com).
+              </p>
             </div>
           ) : (
             <div>
