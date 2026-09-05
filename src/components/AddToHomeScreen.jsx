@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Smartphone, Share, Plus, MoreVertical, X, Check } from "lucide-react";
+import { Smartphone, Share, Plus, MoreVertical, MoreHorizontal, X, Check } from "lucide-react";
 
 /*
   AddToHomeScreen
@@ -8,6 +8,9 @@ import { Smartphone, Share, Plus, MoreVertical, X, Check } from "lucide-react";
      every user & building — one recognisable brand) with the building's name.
   2. First-visit card (remembered per device).
   3. Floating "Add to Home Screen" button with iPhone/Android steps.
+     iPhone steps describe what the person SEES (Share icon, or "..." then
+     Share) rather than naming an iOS version, because iOS 26 Compact layout
+     hides Share behind "...".
 
   Auto-hides for good once the app is installed (Android fires `appinstalled`;
   iOS hides when opened from the Home Screen). A small "×" lets anyone dismiss
@@ -82,7 +85,7 @@ export default function AddToHomeScreen({ building }) {
     upsertMeta("apple-mobile-web-app-title").setAttribute("content", name);
     upsertMeta("apple-mobile-web-app-capable").setAttribute("content", "yes");
     upsertMeta("mobile-web-app-capable").setAttribute("content", "yes");
-    document.title = name + " — NaloHub";
+    document.title = name + " | NaloHub";
     try {
       const manifest = {
         name,
@@ -252,9 +255,20 @@ export default function AddToHomeScreen({ building }) {
               {env.iOS && (
                 <>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 1 }}>On iPhone / iPad (Safari)</div>
-                  <Step n={1} icon={<Share size={16} color={BRAND} />}>Tap the <b>Share</b> button</Step>
-                  <Step n={2} icon={<span style={chip}><Plus size={13} /> Add to Home Screen</span>}>Scroll down and tap <b>Add to Home Screen</b></Step>
-                  <Step n={3} icon={<Check size={16} color={BRAND} />}>Tap <b>Add</b> — done</Step>
+                  <p style={{ fontSize: 13.5, color: "#475569", margin: "8px 0 4px" }}>
+                    Look next to the address bar (top or bottom of the screen). You will see one of these two buttons:
+                  </p>
+                  <Step n={1} icon={<span style={chip}><Share size={13} color={BRAND} /> Share</span>}>
+                    If you see the <b>Share</b> icon (a box with an arrow), tap it.
+                  </Step>
+                  <Step n={1} icon={<span style={chip}><MoreHorizontal size={13} color={BRAND} /> then <Share size={13} color={BRAND} /> Share</span>}>
+                    If you see <b>...</b> instead, tap it, then tap <b>Share</b>.
+                  </Step>
+                  <Step n={2} icon={<span style={chip}><Plus size={13} /> Add to Home Screen</span>}>Scroll down the list and tap <b>Add to Home Screen</b></Step>
+                  <Step n={3} icon={<Check size={16} color={BRAND} />}>Tap <b>Add</b> (top right). Done.</Step>
+                  <p style={{ fontSize: 12.5, color: "#94a3b8", marginTop: 12 }}>
+                    Not using Safari? Chrome and other browsers on iPhone also have a Share icon in the address bar or under their menu. The steps after that are the same.
+                  </p>
                 </>
               )}
               {!env.iOS && (
@@ -269,7 +283,7 @@ export default function AddToHomeScreen({ building }) {
                     <>
                       <Step n={1} icon={<MoreVertical size={16} color={BRAND} />}>Tap the <b>⋮</b> menu (top-right of Chrome)</Step>
                       <Step n={2} icon={<span style={chip}><Plus size={13} /> Add to Home screen</span>}>Tap <b>Add to Home screen</b> (or <b>Install app</b>)</Step>
-                      <Step n={3} icon={<Check size={16} color={BRAND} />}>Tap <b>Add</b> — done</Step>
+                      <Step n={3} icon={<Check size={16} color={BRAND} />}>Tap <b>Add</b>. Done.</Step>
                     </>
                   )}
                   <p style={{ fontSize: 12.5, color: "#94a3b8", marginTop: 12 }}>
