@@ -1,0 +1,9 @@
+-- 0011_pulse_email_to_count_and_strata (APPLIED to prod 6 Sep 2026, with 0011b_pulse_trim_email)
+-- A response counts toward a building only after a one-tap email confirmation
+-- (one email = one response per building). Answers travel in the confirmation link;
+-- no server row ever holds them. Adds the eighth dimension 'strata' (the letterbox).
+-- New tables: pulse_confirm (token, building_id, email_hash, notify, created_at, used_at)
+--             pulse_voters  (building_id, email_hash)  -- one row per counted email per building
+-- pulse_submit revoked from anon. New: pulse_fold (internal), pulse_request_confirm
+-- (service role only, called by pulse-mail), pulse_confirm (public, token + scores),
+-- pulse_building now covers 8 dims. Source of truth is the applied migration in Supabase.

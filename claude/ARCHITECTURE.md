@@ -2,10 +2,11 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-04 · App version: v0.31.0 (sign-in code alongside the magic link +
-> usage analytics Layer 1). Nothing pending.
-> Note: the header line had been stale since 2026-08-08 (it still read v0.25.0) while the body
-> was kept current through v0.30.0. Corrected here; the header moves with every release.
+> Last updated: 2026-09-05 · App version: v0.31.3 (Add to Home Screen steps for iOS 26
+> Compact layout; v0.31.1 and v0.31.2 back-filled below). Nothing pending.
+> Note: the copy of this file in the Claude Project knowledge lags this Drive master (it was
+> still at v0.25.0 on 5 Sep). Drive is the source of truth; read the version line in
+> `src/ResidentPortal.jsx` before stating a current version.
 >
 > _A synced copy of this doc lives in the NaloHub Claude Project so every new chat starts
 > with current context._
@@ -56,12 +57,12 @@ Key files:
 | Path | Role |
 | --- | --- |
 | `src/main.jsx` | Entry. Renders **prod** (`App.jsx`) or **demo** (`ResidentPortal.jsx`) based on `VITE_DEMO_MODE`. |
-| `src/App.jsx` | **Production shell.** Supabase auth, loads real data via `db.js`, provides context with `backend: true`, renders `<BuildingApp/>`. |
-| `src/ResidentPortal.jsx` | **The whole UI (~520 KB, single file)** + the **demo app** default export. All screens, `NAV`, `ViewRouter`, `AppCtx`/`useApp`, theme live here. Exports `AppCtx, BuildingApp, Toast, themeById` for `App.jsx`. |
+| `src/App.jsx` | **Production shell.** Supabase auth, loads real data via `db.js`, provides context with `backend: true`, renders `<BuildingApp/>`, `<Toast/>`, `<AddToHomeScreen/>` and (since v0.31.2) `<UpdateBanner/>`. |
+| `src/ResidentPortal.jsx` | **The whole UI (~700 KB, single file)** + the **demo app** default export. All screens, `NAV`, `ViewRouter`, `AppCtx`/`useApp`, theme live here. Exports `AppCtx, BuildingApp, Toast, UpdateBanner, themeById` for `App.jsx`. |
 | `src/db.js` | **Data layer.** Real Supabase functions for prod; a `if (DEMO_MODE)` block rebinds them to an in-memory seeded dataset (`DS`) for the demo. |
 | `src/supabaseClient.js` | Creates the Supabase client from env vars (placeholders in demo). |
 | `src/billing.js`, `invoicePdf.js`, `csv.js`, `theme.js`, `styles.css` | Billing, PDF/Excel/CSV export, theming. |
-| `src/components/` | `SignIn`, `PlatformConsole`, `AddToHomeScreen`, `GuidedTour`, `AnimatedHeader`, `BillingPanel`, `ui.jsx`. |
+| `src/components/` | `SignIn`, `PlatformConsole`, `AddToHomeScreen`, `GuidedTour`, `AnimatedHeader`, `BillingPanel`, `ui.jsx`. **All component files live here, not in `src/`.** |
 | `supabase/migrations/` | `0001_correspondence_hub_foundation.sql`, `0002_correspondence_rls_recursion_fix.sql`. |
 | `supabase/functions/` | `send-correspondence`, `receive-correspondence`, `maintenance-reminders` (Deno edge functions). |
 | `netlify.toml` | Build (`npm run build` → `dist`) + SPA redirect. |
@@ -85,6 +86,10 @@ There is **one UI, two wrappers**:
 `CorrespondenceView`, `NAV`) affects **both prod and demo** — they share that code.
 Changes inside `db.js`'s `if (DEMO_MODE)` block affect **only the demo**. The real,
 Supabase-backed `db.js` functions serve prod.
+
+**The reverse trap (v0.31.2):** anything mounted only in the demo root (the default export
+`App()` in `ResidentPortal.jsx`) never runs in production. `App.jsx` is a separate shell and
+must mount it too. `UpdateBanner` sat in that gap for five days.
 
 The `backend` flag (from `useApp()`) is how shared components tell the two apart at
 runtime: `backend === true` = production (real data, live email); `backend === false` =
@@ -151,7 +156,7 @@ tamper-evident at the database level.
 
 | Site | `VITE_DEMO_MODE` | Supabase env | Domain |
 | --- | --- | --- | --- |
-| Production app | not set (falsey) | real `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | *(app domain — confirm/fill in)* |
+| Production app | not set (falsey) | real `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | `portal.nalohub.com` |
 | Demo | `true` | none needed | `demo.nalohub.com` |
 
 **Env vars** (`.env.example`): `VITE_SUPABASE_URL` = `https://lipwcsihcxndwwgzhiia.supabase.co`,
@@ -161,12 +166,14 @@ tamper-evident at the database level.
 
 ```bash
 cd "~/Documents/Apps/Resident App/App Code/resident-portal-app 5"
-git add <changed files>          # stage only what you changed
+git add <changed files>        # stage only what you changed
 git commit -m "clear message"
-git push origin main             # Netlify auto-builds prod + demo
+git push origin main           # Netlify auto-builds prod + demo
 ```
 
 Netlify then builds both sites (`npm run build` → `dist`) and publishes in ~1–2 min.
+In practice Greg does the same three steps through GitHub Desktop after replacing files in
+Finder; the paths in this file are what he needs to put each file in the right folder.
 
 > ⚠️ **Do not use `push-to-github.command`.** It's a stale v0.10.0 one-shot that runs
 > `rm -rf .git` and `git push --force`, overwriting history. The incremental flow above
@@ -231,12 +238,13 @@ Netlify then builds both sites (`npm run build` → `dist`) and publishes in ~1�
 ## 9. Conventions & gotchas
 
 - **Single big file:** almost the entire UI is in `ResidentPortal.jsx`. Edit it surgically
-  (targeted `Edit`s); it's ~520 KB.
+  (targeted `Edit`s); it's ~700 KB now.
 - **Verifying a build without polluting `node_modules`:** the Mac `node_modules` is macOS-
   native, so a Linux sandbox `npm run build` fails on `@rollup/rollup-linux-x64-gnu`. To
   verify: copy `src/`, `index.html`, `package.json`, `vite.config.js`, `public/` to a temp
   dir, `npm install`, then `VITE_DEMO_MODE=true npm run build`. Or a quick parse check with
-  a standalone `esbuild.transformSync(code, { loader: "jsx" })`.
+  a standalone `esbuild.transformSync(code, { loader: "jsx" })` or `@babel/parser` with the
+  `jsx` plugin.
 - **Never `select id, data` a content table that can hold base64 payloads.** `documents`,
   `gallery` and `buildings` all store files as data-URLs inside JSONB. One 20 MB scanned PDF in a
   building's documents adds ~20 s to that building's load *for every user, every visit* — and the
@@ -271,6 +279,10 @@ Netlify then builds both sites (`npm run build` → `dist`) and publishes in ~1�
 - **Demo data** is defined in `db.js` under `if (DEMO_MODE)` — the `DS` object (units,
   people, applications, motions, contracts, correspondence, …). Add new demo data there so
   the demo mirrors new features.
+- **Phone instructions describe what the person sees, never an OS version.** Safari's Share
+  button moved behind a "..." menu in iOS 26's default Compact layout; an instruction that
+  said "tap Share" stranded a committee chair (v0.31.3). Write both routes, draw the icons,
+  and keep the same rule for any future "open your browser's menu" step.
 
 ---
 
@@ -279,13 +291,27 @@ Netlify then builds both sites (`npm run build` → `dist`) and publishes in ~1�
 When a change alters architecture — a new module/screen, a data-model change, an access
 rule, an env var, a deploy detail, a new edge function — **update the relevant section of
 this file in the same commit.** At the start of each work session, read this first so
-context carries across sessions instead of being re-derived each time.
+context carries across sessions instead of being re-derived each time. The version line
+(`PLATFORM` in `src/ResidentPortal.jsx`) is the single source of truth for the current
+release; if this header disagrees with it, the header is wrong.
 
 ---
 
 ## 11. Recent history (high level)
 
-- **v0.24.0 (current):** Guides for everyone — 12 new guides (7 resident-facing: report a
+- **v0.31.3 (current, 5 Sep 2026):** Add to Home Screen instructions rewritten to cover iOS 26
+  Compact layout (Share icon, or "..." then Share) in `src/components/AddToHomeScreen.jsx` and
+  the Getting Started tour step in `ResidentPortal.jsx`. See changelog.
+- **v0.31.2:** `UpdateBanner` exported from `ResidentPortal.jsx` and mounted in `App.jsx`;
+  it had only ever run on the demo.
+- **v0.31.1:** printable guide header no longer draws the wordmark twice; hosted logo
+  replaced with a transparent, alpha-trimmed PNG.
+- **v0.31.0 (4 Sep):** sign-in code alongside the magic link (`SignIn.jsx`); usage
+  analytics Layer 1 app half (`logActivity` in `db.js`, hook in `App.jsx`).
+- **v0.30.0 (31 Aug):** version stamping + `UpdateBanner`; Netlify cache headers.
+- **v0.29.x (30–31 Aug):** editable unit registry, versioned Conditions of Approval,
+  unit-linked disputes, browsable Unit Search, audit pass.
+- **v0.24.0:** Guides for everyone — 12 new guides (7 resident-facing: report a
   problem, book/apply, find documents, message committee, privacy switches, join in,
   post an event; plus corr-email, maint-history, nalopilot, docs-upload, complaint) and a
   **sectioned library**: `GUIDE_SECTIONS` (Getting started · Everyday living · Building
@@ -341,193 +367,47 @@ context carries across sessions instead of being re-derived each time.
 
 ## Changelog
 
-- **2026-08-08 (v0.25.1 — by-law hanging indent)** — `src/ResidentPortal.jsx` only. v0.25.0 put
-  `white-space: pre-wrap` on by-law text, which keeps the leading spaces but lets *wrapped* lines
-  fall back to the left margin — so "(a) …" began indented and its second line didn't. Replaced
-  with a small `ByLawText` component that splits on newlines and renders each line as its own
-  block, padded by `Math.round(leadingSpaces / 4) * 18px` (capped at 3 levels). Continuation lines
-  now hang under the clause they belong to, and (i)/(ii) nest under (a)/(b). Used by both the
-  By-Laws card and the NaloPilot by-law card. Blank source lines become 7px spacers. Demo + prod
-  builds verified green.
+### v0.31.3 — Add to Home Screen for iOS 26 Compact layout (5 Sep 2026)
 
-- **2026-08-08 (v0.25.0 — by-law display fixes + NaloPilot answers from by-laws)** —
-  `src/ResidentPortal.jsx` only; no `db.js`, schema or migration change. Found when Curve's
-  38 real by-laws went in and the screen showed them jumbled, unnumbered and with every
-  sub-clause run together.
-  1) **Numbering.** By-laws now arrive in two shapes: added in-app they carry `num` (a
-     number); bulk-loaded from a registered CMS they carry `number` (a string, verbatim as
-     printed). `ByLawsView` and the NaloPilot answer card both rendered `b.num` only, so
-     loaded by-laws showed a bare "By-law" chip. New module-level `blNum(b)` reads either,
-     and `add()`'s `Math.max(...)` uses it so adding a by-law to a loaded set still works
-     (it was producing `NaN`).
-  2) **Order.** `bylaws` has no `ORDER BY` anywhere in the read path, so the list rendered in
-     whatever order Postgres returned. `ByLawsView` now sorts with `blSort` (numeric, ascending).
-  3) **Line breaks.** By-law text is stored with real newlines and indented sub-clauses; both
-     render sites used a plain `<p>`/`<div>`, which collapses them. Added
-     `whiteSpace: "pre-wrap"` to the By-Laws card and the NaloPilot by-law card.
-  4) **NaloPilot now sends `buildingId`** to the `nalo-answer` edge function (v2, deployed
-     2026-08-08). Previously the client matched by-laws locally and showed them as cards, but
-     the *model's answer text* was written from legislation only, because the function never
-     saw the by-laws. `NaloPilotView` passes `buildingId` through to `NaloPilotInner` and it
-     goes in the invoke body. The function scopes by-laws with the caller's own JWT (see §9),
-     so this cannot widen access.
-  5) The By-Laws add-form helper line no longer claims bulk CMS upload exists — it points at
-     `info@nalohub.com` until that flow ships.
-  Demo + production builds both verified green.
+Two files: `src/components/AddToHomeScreen.jsx` and `src/ResidentPortal.jsx` (one tour step
+plus the version line). No `db.js`, schema or edge-function change.
 
-- **2026-08-06 (v0.24.0 — Guides for everyone)** — `src/ResidentPortal.jsx` only. Twelve
-  new `GUIDES` entries (res-maint · book-apply · find-docs · message · privacy · join-in ·
-  events · corr-email · maint-history · nalopilot · docs-upload · complaint), all step
-  labels verified against live buttons (incl. real maintenance stages New → Triaged →
-  In progress → Resolved, Dispute entry kinds Update / Email or message / Document /
-  From in-app messages, Documents visibility options, Events ⟨Post event⟩, Correspondence
-  ⟨Unfiled⟩→⟨File⟩). Sectioned library via `GUIDE_SECTIONS` + `sec` per guide, grouped
-  rendering in `GuideDrawer` and Help hub. `VIEW_GUIDE` supports arrays with role-based
-  resolution in `GuideBar`. Four new `data-guide` tags; `PartyPopper`/`History` imports.
-  PLATFORM 0.24.0. Demo + prod builds verified green.
+- **Cause.** iOS 26 Safari ships with a "Compact" tab layout by default on fresh installs: one
+  pill at the bottom of the screen holding a back arrow, the URL and a "..." (More) button.
+  The Share button is inside "...". The older "Top" and "Bottom" layouts, and every earlier iOS,
+  show Share beside the address bar. Both the floating panel and the Getting Started step said
+  "tap Share"; Curve's committee chair had no Share button to tap and stopped there.
+- **Fix.** The iPhone panel in `AddToHomeScreen.jsx` now shows two step-1 rows, each with its
+  icon chip drawn inline (`Share`, and `MoreHorizontal` then `Share` from lucide): "If you see
+  the Share icon (a box with an arrow), tap it" / "If you see ... instead, tap it, then tap
+  Share." Steps 2 and 3 unchanged. A footnote covers Chrome on iPhone. The tour step at
+  `GUIDES` → get-in reads the same way. No iOS version is named anywhere; the rule is to
+  describe what the person can see.
+- **Deliberately not done.** Detecting the Safari layout from JavaScript is not possible, so no
+  attempt to show only the "right" row. Android copy is unchanged (one route, plus Chrome's
+  native `beforeinstallprompt` when available). The component already returns `null` when
+  running standalone, so installed users never see the button.
+- **Follow-up outside the app.** The "Getting into NaloHub on your phone" A4 guide (4 Sep) still
+  says "tap Share" on its home-screen step and should be reprinted with the two-route wording.
 
-- **2026-08-05 (XSS hardening — Correspondence, shipped with v0.23.0)** — The frontend half
-  of the 5 Aug security review, folded into the v0.23.0 deploy so one commit carries both.
-  New `htmlToText()` helper above `CorrespondenceView`; both inbound-email sinks now route
-  through it: the on-screen thread render (was `dangerouslySetInnerHTML`, now plain text)
-  and the print-thread path (HTML bodies converted to text, then escaped — `${esc(isHtml ?
-  htmlToText(body) : body)}`). Zero `dangerouslySetInnerHTML` remains in the file. Verified:
-  `<img onerror>`, `<svg onload>` and `<script>` payloads neutralised; builds green. The
-  three backend fixes from the same review were already live in Supabase. Behaviour change:
-  HTML-only inbound emails display as clean plain text.
+### v0.31.2 — UpdateBanner reaches production
 
-- **2026-08-05 (v0.23.0 — NaloHub Guides)** — One change, `src/ResidentPortal.jsx` only.
-  New Guides module inserted before `DemoOnly`: `GUIDES` (8 guides: get-in/home-screen ·
-  maintenance record→vote · maintenance report export · walk-through · committee vote ·
-  invite people · compliance calendar · announcements; each `{id, title, who, mins, icon,
-  roles(u), steps[{t, check, target?, view?}]}` with on-screen button labels wrapped in
-  ⟨…⟩), `GuideDrawer` (library + guide modes, progress, reset, print), `GuideBar`
-  (contextual pill, `VIEW_GUIDE` map), `GuideText` (⟨…⟩ → button pills), `printGuide`
-  (A4 branded print window: navy/teal, logo from nalohub.com with hide-on-error fallback,
-  "Free to copy, print and share… 🌊 Be in the Nalo." footer, "Current at <month year>").
-  Small supporting edits: `HeaderAction` spreads `...p`; seven `data-guide` tags on the
-  buttons guides point at (Maintenance Report action, Reports Word-report, Walk-Through
-  load/start, Directory Add person, Compliance Word agenda, Announcements New); Help hub
-  gains the Guides grid (uses `user` from context); `GuideDrawer`/`GuideBar` mounted in
-  `BuildingApp`; PLATFORM bumped to 0.23.0. Demo + prod builds verified green.
+`UpdateBanner` (v0.30.0) was defined in `ResidentPortal.jsx` but only rendered by the demo
+root (the default export `App()`), which is what `demo.nalohub.com` builds. Production runs
+`src/App.jsx`, which mounts `BuildingApp`, `Toast` and `AddToHomeScreen` and never mounted the
+banner, so the "you are on an old build" prompt existed only on the demo. Caught when an iPhone
+home-screen install sat on 0.30.0 with no prompt while a laptop and an Android phone had picked
+up 0.31.1. Fix: export `UpdateBanner`, mount it in `App.jsx`. The demo root keeps its own
+instance; neither shell renders it twice. See the "reverse trap" note in §4.
 
-- **2026-07-22 (v0.21.0 — Getting Started + Be In the Nalo, Phase 1)** — Two features, one change,
-  `src/ResidentPortal.jsx` only (no db.js / schema / edge-function changes):
-  1) **Getting Started** — committee-gated launch tracker (NAV `onboarding`, home group): 8 phases /
-     53 steps with owner pills (Admin/Champion/Committee), Optional + N/A, per-step notes, progress %
-     + phase timeline, copy-to-clipboard committee summary. Shared state on `building.onboarding`
-     {done,na,notes} via the JSONB store. Ticking the final gate stamps `building.launchedAt`.
-  2) **Be In the Nalo (recognition Phase 1)** — WelcomeBanner (first sign-in, per-user localStorage),
-     AboardMeter (active ÷ roll incl. new demo-only `status:"invited"`; 50/75/100 milestone toasts,
-     flags on `building.recognition.milestones`), BadgeShelf + badges (founding/explorer/settled) on
-     `building.recognition.badges[userId]`, awarded via playbook-completion hooks. Two-tier controls:
-     committee `building.community` = full|gentle|essentials (Settings card, amber caution on
-     essentials) × personal Celebrations (localStorage `nalo_celebrations_<uid>`); app honours the
-     more restrictive. Founding era = until launch + 30 days. Demo seeded: SeaHaven mid-tracker
-     (~45%, notes), 58 invited users (~70% aboard), Greg holds founding+explorer; Riverbend clean.
-     Deployed via GitHub web upload (carried the pending Contractors quote fix with it); local repo
-     synced via GitHub Desktop afterwards.
+### v0.31.1 — printable guide header
 
-- **2026-07-19 (v0.20.0)** — Acted on Greg's feedback round. All changes are in
-  `src/ResidentPortal.jsx` only (111 insertions / 27 deletions); no `db.js`, edge-function or
-  schema changes, because new fields persist through the generic JSONB store (`persistChange`) and
-  `createMotion`'s `details` column. Demo + production builds both verified green. Items shipped:
-  managing-agent CTA (#1), multi-recipient announcements (#2), scheme/plan reference (#3), editable
-  Dashboard label + reorder (#4), motion document uploads (#5), Fire Safety evacuation plan (#8),
-  maintenance-workflow progress bar/next-step (#7), header actions to body across all screens (#9).
-  Proxy form (#6) confirmed already present — auto-generated signable PDF via `openProxyFormPdf`
-  in Voting → Proxies; nothing to add.
-
-- **2026-07-19 (v0.20.0, follow-up)** — Outbound announcement email wired: new
-  `send-announcement` edge function (deployed to prod, dormant until the frontend ships),
-  `db.js` `sendAnnouncementEmail()` + demo no-op, and `Announcements.post()` now emails residents
-  (all / owners / specific) at their real addresses in `backend` mode *in addition to* the in-app
-  notice — BCC'd for privacy, reply-to the building's committee email. Note: this is separate from
-  the **Correspondence Hub**, which already emails external parties (contractors, solicitors,
-  strata) via `send-correspondence`. Also: first-week playbook (`CommitteePlaybook`) now truly
-  auto-retires once all items are done (was only manual-dismiss) and says so in its subheading;
-  and demo seed gained a scheme reference on both buildings, a sample evacuation plan on SeaHaven,
-  a targeted ("specific" audience) announcement, and a document attachment on a demo motion.
-
-- **2026-07-19 (inbound email — central building address)** — Groundwork so each building can
-  advertise ONE public address (`<slug>@send.nalohub.com`) that lands in Correspondence. New
-  `ensure-mailbox` edge function (deployed) provisions a clean name-based slug per building
-  (existing mailboxes are never renamed, so live reply-to tokens keep working); `db.js`
-  `ensureBuildingMailbox()`; and a **Building email address** card in Settings (committee/manager)
-  that shows + copies the address. Inbound already routes end-to-end in `receive-correspondence`
-  (catch-all `send.nalohub.com` → webhook → slug lookup → thread or Unfiled tray) — the remaining
-  step is operational, not code: enable **Receiving** on the domain in Resend, add ONE MX record
-  at Uptime cPanel for `send.nalohub.com`, and set the `RESEND_RECEIVE_KEY` + `RESEND_WEBHOOK_SECRET`
-  secrets. Deferred until receiving is verified live: switching `send-announcement`'s reply-to from
-  the committee email to the building's app address (so announcement replies also land in-app).
-
-- **2026-07-20 (inbound live · reply routing · quote fix)** — Operational + code follow-ups:
-  1) **Inbound receiving went live** — Resend Receiving enabled on `send.nalohub.com`, MX added at
-     Uptime cPanel, `RESEND_RECEIVE_KEY` + `RESEND_WEBHOOK_SECRET` set; verified end-to-end (real emails
-     threading into Correspondence). Every building can now advertise one public address.
-  2) **SeaHaven's prod mailbox slug cleaned** to `seahaven@send.nalohub.com` (safe: threading keys off the
-     thread UUID token, not the slug, so existing reply-tos still work).
-  3) **`send-announcement` → v2**: `reply_to` now points at the building's app inbox, so replies to a
-     notice land in Correspondence instead of a personal inbox (deployed to prod via connector).
-  4) **Display fix**: the Contractors `HowTo` `sell` used `\u201C`/`\u201D` escapes that JSX attributes
-     render literally — replaced with real quote characters. Frontend one-line push (`main` was `e7d9946`).
-  Not app code: produced an editable BCC proposal document ("NaloHub at Curve") from local demo
-  screenshots — the demo was rebuilt locally with the building renamed "Curve" purely for the images,
-  with a fictional-sample-data disclaimer; prod/demo remain "SeaHaven".
-
-## Curve Birtinya bulk import (30 Aug 2026, data operation)
-
-Loaded the BM's `Residents_08_2026.xlsx` into building `ecd3d712-c949-4dec-b20c-9a5d36df0eb6` via a single
-transactional SQL script run through the Supabase connector on Greg's authorisation
-(`curve_birtinya_import.sql`, kept with the staging workbook `Curve_Birtinya_Import_Staging.xlsx`).
-
-- Targets: `units` (56, incl. agent_* and `notes`), `unit_people` (125; `is_current=true`; landline /
-  committee role / primary-tenant marker in `notes`), `unit_vehicles` (82; Make/Model into `model`, make
-  blank), `unit_pets` (11), `unit_access_items` (230; `item_type='key'`, label "Key or fob", no holder),
-  `unit_breaches` (4; `occurred_at=current_date`, flagged in description), one `audit_log` row
-  (`unit.bulk_imported`).
-- Every insert has a duplicate guard (unit_number / name+type / registration / identifier), so the
-  script is safe to re-run. Existing unit 105 was preserved; agent/notes only fill blanks.
-- Mapping decisions: Mobile over Phone; Car Space / Car Location / Broadcast Custom Group / Requests /
-  Lot / Fax skipped; EC Member kept as a note for membership invites; Owner Investor columns not
-  needed (every tenanted unit already had owner rows). Non-unit rows (Building Manager, Fire Warden
-  Key Set, Emergency Access Lock Box) skipped. "Office" imported as a unit.
-- Gap: `units.notes` is not rendered by `UnitSearchView` / `ManagingAgentCard`. Add a "Unit notes"
-  card (committee-only) — confirm `unit_health_check` RPC returns the full unit row incl. `notes`.
-- Schema facts confirmed live: `buildings.name` lives in `buildings.data->>'name'` (JSONB);
-  `unit_people` has `user_id, move_in, move_out, is_current, notes`; `unit_access_items` has
-  `status, notes, ack_*`; `audit_log(building_id, actor, action, target, detail jsonb)`.
-
-## v0.29.0 — editable unit registry, versioned conditions, unit-linked disputes (30 Aug 2026)
-
-`src/ResidentPortal.jsx` (`UnitSearchView` rewritten) + `src/db.js` + one migration
-(`unit_health_check_app_match_and_past_people`). No table changes: every column used already
-existed, and `unit_people` had `move_in` / `move_out` / `is_current` / `notes` unused until now.
-
-- **New db.js functions**, all guarded by the existing committee RLS (`*_committee` policies,
-  `is_committee` = roles `bcc` + `admin`): `updateUnit`, `updateUnitPerson`, `moveOutUnitPerson`,
-  `restoreUnitPerson`, `moveOutUnitPeopleOfType`, `deleteUnitPerson`, `updateUnitPet`,
-  `deleteUnitPet`, `updateUnitVehicle`, `deleteUnitVehicle`, `updateAccessItem`,
-  `deleteAccessItem`, `updateUnitBreach`, `deleteUnitBreach`. Each writes an `audit_log` row.
-  All 14 are re-bound in the `DEMO_MODE` block against `DS`.
-- **Archive, not delete, for occupants.** Owners and tenants get `is_current=false` + `move_out`;
-  `unit_health_check` returns them separately as `past_people`. `deleteUnitPerson` is exposed in
-  the UI only on already-archived rows and on non-occupant types (property manager, emergency
-  contact). `moveOutUnitPeopleOfType` backs the "replacing the current owner/tenant" checkbox on
-  the add-person form (default off — co-owners are the norm).
-- **`unit_health_check` rewrite.** Each row in `people` now carries `app_match`: a lateral pick of
-  the best membership match, `{match:'email'|'name', role, status, full_name, email}`. Email match
-  is building-wide (email is the identity); name match is restricted to memberships whose `unit`
-  is this unit, and is surfaced as a weaker amber signal the committee confirms, never an
-  automatic merge. `residents_directory` entries gain `matched`, so the UI stops double-listing a
-  member who is already on the register and instead shows the unmatched ones as
-  "App members not on the register". Also adds `past_people`.
-- **UI notes:** edit panels render inline under the row being edited (single `edit` state of
-  `{kind,id}`, `moveout` is a pseudo-kind). `units.notes` finally has a home: a committee/BM-only
-  "Unit notes" card, hidden while the unit edit panel is open so there is only ever one editor.
-  Legacy `store.keyfobs` rows merged into the keys section stay read-only (no id in the new table).
-- **Known gap:** building managers (`role='manager'`) are not `is_committee`, so they cannot edit
-  the register they most often maintain. Deliberate for now; see the Feature Register.
+`printGuide`'s `.head` was a flex row of the hosted logo (`https://nalohub.com/NaloHub-Logo.png`)
+followed by a bold text lockup, but the logo *is* the wordmark, so all twenty cheat sheets printed
+the name beside itself. The text div is now hidden by default and revealed only by the `<img>`
+`onerror` handler, so a 404 on the hosted file still prints branded. Alt text added. Separately
+(no code), the hosted PNG was replaced with a transparent, alpha-trimmed version; the old file had
+an opaque light-grey panel that printed as a grey rectangle on white paper.
 
 ### v0.31.0 — sign-in code + usage analytics Layer 1 (4 Sep 2026)
 
@@ -628,6 +508,7 @@ remedy was force-quitting.
   `/version.json?t=…` with `cache:"no-store"` on mount, on `focus`, on `visibilitychange`, and
   every 15 min; shows a dismissible banner when `build !== __BUILD_ID__`. Never auto-reloads.
   Fails silently (offline, 404, dev where `__BUILD_ID__` is undefined → `"dev"`, which skips).
+  **Until v0.31.2 this was only mounted in the demo root; see that entry.**
 - `netlify.toml`: `no-store` on `/version.json`, `must-revalidate` on `/index.html`,
   `immutable` + 1 year on `/assets/*` (safe — Vite content-hashes those filenames).
 
@@ -678,6 +559,38 @@ shims answer nearly every db function, so the guard is usually unnecessary and a
 To add or change demo residents, edit the tuple tables, not `DS`. Demo `listUnits` now sorts
 numerically to match the live query's `order("unit_number")`.
 
+### v0.29.0 — editable unit registry, versioned conditions, unit-linked disputes (30 Aug 2026)
+
+`src/ResidentPortal.jsx` (`UnitSearchView` rewritten) + `src/db.js` + one migration
+(`unit_health_check_app_match_and_past_people`). No table changes: every column used already
+existed, and `unit_people` had `move_in` / `move_out` / `is_current` / `notes` unused until now.
+
+- **New db.js functions**, all guarded by the existing committee RLS (`*_committee` policies,
+  `is_committee` = roles `bcc` + `admin`): `updateUnit`, `updateUnitPerson`, `moveOutUnitPerson`,
+  `restoreUnitPerson`, `moveOutUnitPeopleOfType`, `deleteUnitPerson`, `updateUnitPet`,
+  `deleteUnitPet`, `updateUnitVehicle`, `deleteUnitVehicle`, `updateAccessItem`,
+  `deleteAccessItem`, `updateUnitBreach`, `deleteUnitBreach`. Each writes an `audit_log` row.
+  All 14 are re-bound in the `DEMO_MODE` block against `DS`.
+- **Archive, not delete, for occupants.** Owners and tenants get `is_current=false` + `move_out`;
+  `unit_health_check` returns them separately as `past_people`. `deleteUnitPerson` is exposed in
+  the UI only on already-archived rows and on non-occupant types (property manager, emergency
+  contact). `moveOutUnitPeopleOfType` backs the "replacing the current owner/tenant" checkbox on
+  the add-person form (default off — co-owners are the norm).
+- **`unit_health_check` rewrite.** Each row in `people` now carries `app_match`: a lateral pick of
+  the best membership match, `{match:'email'|'name', role, status, full_name, email}`. Email match
+  is building-wide (email is the identity); name match is restricted to memberships whose `unit`
+  is this unit, and is surfaced as a weaker amber signal the committee confirms, never an
+  automatic merge. `residents_directory` entries gain `matched`, so the UI stops double-listing a
+  member who is already on the register and instead shows the unmatched ones as
+  "App members not on the register". Also adds `past_people`.
+- **UI notes:** edit panels render inline under the row being edited (single `edit` state of
+  `{kind,id}`, `moveout` is a pseudo-kind). `units.notes` finally has a home: a committee/BM-only
+  "Unit notes" card, hidden while the unit edit panel is open so there is only ever one editor.
+  Legacy `store.keyfobs` rows merged into the keys section stay read-only (no id in the new table).
+- **Known gap:** building managers (`role='manager'`) are not `is_committee`, so they cannot edit
+  the register they most often maintain. Addressed in the same release by the per-building
+  `bmRegistryWrite` switch below.
+
 ### v0.29.0 additions (merged with the registry work above, which shipped in the same release)
 
 Two streams were built in parallel in separate chats, both stamped v0.28.0, both touching
@@ -725,3 +638,172 @@ Anything left nested (`H`, `P`, `Bar`) is presentational and contains no inputs,
 harmless. When adding UI here, declare components at module level, or render them as plain
 function calls. The regression test for this types character by character and asserts the node is
 still connected and holds the full string; asserting only that a panel opens will not catch it.
+
+### Curve Birtinya bulk import (30 Aug 2026, data operation)
+
+Loaded the BM's `Residents_08_2026.xlsx` into building `ecd3d712-c949-4dec-b20c-9a5d36df0eb6` via a single
+transactional SQL script run through the Supabase connector on Greg's authorisation
+(`curve_birtinya_import.sql`, kept with the staging workbook `Curve_Birtinya_Import_Staging.xlsx`).
+
+- Targets: `units` (56, incl. agent_* and `notes`), `unit_people` (125; `is_current=true`; landline /
+  committee role / primary-tenant marker in `notes`), `unit_vehicles` (82; Make/Model into `model`, make
+  blank), `unit_pets` (11), `unit_access_items` (230; `item_type='key'`, label "Key or fob", no holder),
+  `unit_breaches` (4; `occurred_at=current_date`, flagged in description), one `audit_log` row
+  (`unit.bulk_imported`).
+- Every insert has a duplicate guard (unit_number / name+type / registration / identifier), so the
+  script is safe to re-run. Existing unit 105 was preserved; agent/notes only fill blanks.
+- Mapping decisions: Mobile over Phone; Car Space / Car Location / Broadcast Custom Group / Requests /
+  Lot / Fax skipped; EC Member kept as a note for membership invites; Owner Investor columns not
+  needed (every tenanted unit already had owner rows). Non-unit rows (Building Manager, Fire Warden
+  Key Set, Emergency Access Lock Box) skipped. "Office" imported as a unit.
+- `units.notes` is now rendered by the v0.29.0 "Unit notes" card.
+- Schema facts confirmed live: `buildings.name` lives in `buildings.data->>'name'` (JSONB);
+  `unit_people` has `user_id, move_in, move_out, is_current, notes`; `unit_access_items` has
+  `status, notes, ack_*`; `audit_log(building_id, actor, action, target, detail jsonb)`.
+
+### 2026-08-08 (v0.25.1 — by-law hanging indent)
+
+`src/ResidentPortal.jsx` only. v0.25.0 put `white-space: pre-wrap` on by-law text, which keeps
+the leading spaces but lets *wrapped* lines fall back to the left margin — so "(a) …" began
+indented and its second line didn't. Replaced with a small `ByLawText` component that splits on
+newlines and renders each line as its own block, padded by `Math.round(leadingSpaces / 4) * 18px`
+(capped at 3 levels). Continuation lines now hang under the clause they belong to, and (i)/(ii)
+nest under (a)/(b). Used by both the By-Laws card and the NaloPilot by-law card. Blank source
+lines become 7px spacers. Demo + prod builds verified green.
+
+### 2026-08-08 (v0.25.0 — by-law display fixes + NaloPilot answers from by-laws)
+
+`src/ResidentPortal.jsx` only; no `db.js`, schema or migration change. Found when Curve's
+38 real by-laws went in and the screen showed them jumbled, unnumbered and with every
+sub-clause run together.
+1) **Numbering.** By-laws now arrive in two shapes: added in-app they carry `num` (a
+   number); bulk-loaded from a registered CMS they carry `number` (a string, verbatim as
+   printed). `ByLawsView` and the NaloPilot answer card both rendered `b.num` only, so
+   loaded by-laws showed a bare "By-law" chip. New module-level `blNum(b)` reads either,
+   and `add()`'s `Math.max(...)` uses it so adding a by-law to a loaded set still works
+   (it was producing `NaN`).
+2) **Order.** `bylaws` has no `ORDER BY` anywhere in the read path, so the list rendered in
+   whatever order Postgres returned. `ByLawsView` now sorts with `blSort` (numeric, ascending).
+3) **Line breaks.** By-law text is stored with real newlines and indented sub-clauses; both
+   render sites used a plain `<p>`/`<div>`, which collapses them. Added
+   `whiteSpace: "pre-wrap"` to the By-Laws card and the NaloPilot by-law card.
+4) **NaloPilot now sends `buildingId`** to the `nalo-answer` edge function (v2, deployed
+   2026-08-08). Previously the client matched by-laws locally and showed them as cards, but
+   the *model's answer text* was written from legislation only, because the function never
+   saw the by-laws. `NaloPilotView` passes `buildingId` through to `NaloPilotInner` and it
+   goes in the invoke body. The function scopes by-laws with the caller's own JWT (see §9),
+   so this cannot widen access.
+5) The By-Laws add-form helper line no longer claims bulk CMS upload exists — it points at
+   `info@nalohub.com` until that flow ships.
+Demo + production builds both verified green.
+
+### 2026-08-06 (v0.24.0 — Guides for everyone)
+
+`src/ResidentPortal.jsx` only. Twelve new `GUIDES` entries (res-maint · book-apply · find-docs ·
+message · privacy · join-in · events · corr-email · maint-history · nalopilot · docs-upload ·
+complaint), all step labels verified against live buttons (incl. real maintenance stages New →
+Triaged → In progress → Resolved, Dispute entry kinds Update / Email or message / Document /
+From in-app messages, Documents visibility options, Events ⟨Post event⟩, Correspondence
+⟨Unfiled⟩→⟨File⟩). Sectioned library via `GUIDE_SECTIONS` + `sec` per guide, grouped
+rendering in `GuideDrawer` and Help hub. `VIEW_GUIDE` supports arrays with role-based
+resolution in `GuideBar`. Four new `data-guide` tags; `PartyPopper`/`History` imports.
+PLATFORM 0.24.0. Demo + prod builds verified green.
+
+### 2026-08-05 (XSS hardening — Correspondence, shipped with v0.23.0)
+
+The frontend half of the 5 Aug security review, folded into the v0.23.0 deploy so one commit
+carries both. New `htmlToText()` helper above `CorrespondenceView`; both inbound-email sinks now
+route through it: the on-screen thread render (was `dangerouslySetInnerHTML`, now plain text)
+and the print-thread path (HTML bodies converted to text, then escaped — `${esc(isHtml ?
+htmlToText(body) : body)}`). Zero `dangerouslySetInnerHTML` remains in the file. Verified:
+`<img onerror>`, `<svg onload>` and `<script>` payloads neutralised; builds green. The
+three backend fixes from the same review were already live in Supabase. Behaviour change:
+HTML-only inbound emails display as clean plain text.
+
+### 2026-08-05 (v0.23.0 — NaloHub Guides)
+
+One change, `src/ResidentPortal.jsx` only. New Guides module inserted before `DemoOnly`:
+`GUIDES` (8 guides: get-in/home-screen · maintenance record→vote · maintenance report export ·
+walk-through · committee vote · invite people · compliance calendar · announcements; each
+`{id, title, who, mins, icon, roles(u), steps[{t, check, target?, view?}]}` with on-screen
+button labels wrapped in ⟨…⟩), `GuideDrawer` (library + guide modes, progress, reset, print),
+`GuideBar` (contextual pill, `VIEW_GUIDE` map), `GuideText` (⟨…⟩ → button pills), `printGuide`
+(A4 branded print window: navy/teal, logo from nalohub.com with hide-on-error fallback,
+"Free to copy, print and share… 🌊 Be in the Nalo." footer, "Current at <month year>").
+Small supporting edits: `HeaderAction` spreads `...p`; seven `data-guide` tags on the
+buttons guides point at (Maintenance Report action, Reports Word-report, Walk-Through
+load/start, Directory Add person, Compliance Word agenda, Announcements New); Help hub
+gains the Guides grid (uses `user` from context); `GuideDrawer`/`GuideBar` mounted in
+`BuildingApp`; PLATFORM bumped to 0.23.0. Demo + prod builds verified green.
+
+### 2026-07-22 (v0.21.0 — Getting Started + Be In the Nalo, Phase 1)
+
+Two features, one change, `src/ResidentPortal.jsx` only (no db.js / schema / edge-function changes):
+1) **Getting Started** — committee-gated launch tracker (NAV `onboarding`, home group): 8 phases /
+   53 steps with owner pills (Admin/Champion/Committee), Optional + N/A, per-step notes, progress %
+   + phase timeline, copy-to-clipboard committee summary. Shared state on `building.onboarding`
+   {done,na,notes} via the JSONB store. Ticking the final gate stamps `building.launchedAt`.
+2) **Be In the Nalo (recognition Phase 1)** — WelcomeBanner (first sign-in, per-user localStorage),
+   AboardMeter (active ÷ roll incl. new demo-only `status:"invited"`; 50/75/100 milestone toasts,
+   flags on `building.recognition.milestones`), BadgeShelf + badges (founding/explorer/settled) on
+   `building.recognition.badges[userId]`, awarded via playbook-completion hooks. Two-tier controls:
+   committee `building.community` = full|gentle|essentials (Settings card, amber caution on
+   essentials) × personal Celebrations (localStorage `nalo_celebrations_<uid>`); app honours the
+   more restrictive. Founding era = until launch + 30 days. Demo seeded: SeaHaven mid-tracker
+   (~45%, notes), 58 invited users (~70% aboard), Greg holds founding+explorer; Riverbend clean.
+Deployed via GitHub web upload (carried the pending Contractors quote fix with it); local repo
+synced via GitHub Desktop afterwards.
+
+### 2026-07-19 (v0.20.0)
+
+Acted on Greg's feedback round. All changes are in `src/ResidentPortal.jsx` only (111 insertions /
+27 deletions); no `db.js`, edge-function or schema changes, because new fields persist through the
+generic JSONB store (`persistChange`) and `createMotion`'s `details` column. Demo + production
+builds both verified green. Items shipped: managing-agent CTA (#1), multi-recipient announcements
+(#2), scheme/plan reference (#3), editable Dashboard label + reorder (#4), motion document uploads
+(#5), Fire Safety evacuation plan (#8), maintenance-workflow progress bar/next-step (#7), header
+actions to body across all screens (#9). Proxy form (#6) confirmed already present — auto-generated
+signable PDF via `openProxyFormPdf` in Voting → Proxies; nothing to add.
+
+### 2026-07-19 (v0.20.0, follow-up)
+
+Outbound announcement email wired: new `send-announcement` edge function (deployed to prod,
+dormant until the frontend ships), `db.js` `sendAnnouncementEmail()` + demo no-op, and
+`Announcements.post()` now emails residents (all / owners / specific) at their real addresses in
+`backend` mode *in addition to* the in-app notice — BCC'd for privacy, reply-to the building's
+committee email. Note: this is separate from the **Correspondence Hub**, which already emails
+external parties (contractors, solicitors, strata) via `send-correspondence`. Also: first-week
+playbook (`CommitteePlaybook`) now truly auto-retires once all items are done (was only
+manual-dismiss) and says so in its subheading; and demo seed gained a scheme reference on both
+buildings, a sample evacuation plan on SeaHaven, a targeted ("specific" audience) announcement,
+and a document attachment on a demo motion.
+
+### 2026-07-19 (inbound email — central building address)
+
+Groundwork so each building can advertise ONE public address (`<slug>@send.nalohub.com`) that
+lands in Correspondence. New `ensure-mailbox` edge function (deployed) provisions a clean
+name-based slug per building (existing mailboxes are never renamed, so live reply-to tokens keep
+working); `db.js` `ensureBuildingMailbox()`; and a **Building email address** card in Settings
+(committee/manager) that shows + copies the address. Inbound already routes end-to-end in
+`receive-correspondence` (catch-all `send.nalohub.com` → webhook → slug lookup → thread or
+Unfiled tray) — the remaining step is operational, not code: enable **Receiving** on the domain
+in Resend, add ONE MX record at Uptime cPanel for `send.nalohub.com`, and set the
+`RESEND_RECEIVE_KEY` + `RESEND_WEBHOOK_SECRET` secrets. Deferred until receiving is verified
+live: switching `send-announcement`'s reply-to from the committee email to the building's app
+address (so announcement replies also land in-app).
+
+### 2026-07-20 (inbound live · reply routing · quote fix)
+
+Operational + code follow-ups:
+1) **Inbound receiving went live** — Resend Receiving enabled on `send.nalohub.com`, MX added at
+   Uptime cPanel, `RESEND_RECEIVE_KEY` + `RESEND_WEBHOOK_SECRET` set; verified end-to-end (real emails
+   threading into Correspondence). Every building can now advertise one public address.
+2) **SeaHaven's prod mailbox slug cleaned** to `seahaven@send.nalohub.com` (safe: threading keys off the
+   thread UUID token, not the slug, so existing reply-tos still work).
+3) **`send-announcement` → v2**: `reply_to` now points at the building's app inbox, so replies to a
+   notice land in Correspondence instead of a personal inbox (deployed to prod via connector).
+4) **Display fix**: the Contractors `HowTo` `sell` used `\u201C`/`\u201D` escapes that JSX attributes
+   render literally — replaced with real quote characters. Frontend one-line push (`main` was `e7d9946`).
+Not app code: produced an editable BCC proposal document ("NaloHub at Curve") from local demo
+screenshots — the demo was rebuilt locally with the building renamed "Curve" purely for the images,
+with a fictional-sample-data disclaimer; prod/demo remain "SeaHaven".

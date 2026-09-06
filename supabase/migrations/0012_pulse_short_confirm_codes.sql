@@ -1,0 +1,4 @@
+-- 0012_pulse_short_confirm_codes (APPLIED to prod 6 Sep 2026)
+-- pulse_confirm.code (8 chars, unique) so the emailed link is /portrait/?k=CODE-ANSWERS.
+-- pulse_request_confirm now returns code; new public pulse_confirm_code(text, jsonb);
+-- pulse_building returns slug for short share links. Source of truth is the applied migration.
