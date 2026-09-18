@@ -476,6 +476,52 @@ export async function addAccessItem(bid, unitId, row) {
   if (error) throw error;
   audit(bid, "unit.access_item_issued", `${row.item_type} ${row.identifier || ""}`.trim());
 }
+// Every access device in the building, for the Key & Fob Register.
+//
+// Why this exists: the register screen read the legacy `keyfobs` JSONB store
+// while Unit Search read `unit_access_items`. Curve Birtinya's 230 imported
+// keys landed in the latter, so the register showed an empty list. This is the
+// building-wide read of the real table.
+//
+// Three queries rather than one embed: `occupants` needs unit_people filtered
+// to current residents, which is cleaner stitched here (same shape as
+// listUnitsOverview). `occupants` exists ONLY so the register can be searched
+// by resident name. An item with no `issued_to` has NO recorded holder, and
+// the UI must never present an occupant as one -- most BM registers record a
+// key against a lot, not a person.
+export async function listAccessItems(bid) {
+  const { data: items, error } = await supabase.from("unit_access_items")
+    .select("*").eq("building_id", bid);
+  if (error) throw error;
+  if (!items || !items.length) return [];
+
+  const { data: units, error: ue } = await supabase.from("units")
+    .select("id, unit_number").eq("building_id", bid);
+  if (ue) throw ue;
+  const unitNo = {};
+  (units || []).forEach((u) => { unitNo[u.id] = u.unit_number; });
+
+  const unitIds = (units || []).map((u) => u.id);
+  let people = [];
+  if (unitIds.length) {
+    const { data: pp, error: pe } = await supabase.from("unit_people")
+      .select("unit_id, full_name, is_current").in("unit_id", unitIds);
+    if (pe) throw pe;
+    people = pp || [];
+  }
+  const occ = {};
+  people.forEach((p) => {
+    if (p.is_current === false) return;
+    const n = (p.full_name || "").trim();
+    if (n) (occ[p.unit_id] = occ[p.unit_id] || []).push(n);
+  });
+
+  return items.map((a) => ({
+    ...a,
+    unit_number: unitNo[a.unit_id] || "",
+    occupants: occ[a.unit_id] || [],
+  }));
+}
 export async function updateAccessItemStatus(id, status) {
   const patch = { status };
   if (status === "returned") patch.returned_at = new Date().toISOString().slice(0, 10);
@@ -1411,6 +1457,12 @@ if (DEMO_MODE) {
       { id: id(), unit_id: "unit-12", item_type: "fob", identifier: "F-9981", label: "Lobby & garage", status: "issued", issued_to: "Tina Marsh", ack_at: daysAgo(3) },
       { id: id(), unit_id: "unit-12", item_type: "key", identifier: "K-012", label: "Front door", status: "issued", issued_to: "Owen Chandler", issued_to_user_id: "x", ack_at: null },
       { id: id(), unit_id: "unit-5", item_type: "swipe_card", identifier: "SC-445", label: "Gym level", status: "issued", issued_to: "Betty Nguyen" },
+      // Building-level devices: unit_id null (migration 0014). These are what
+      // the Purpose field exists for -- they belong to common property, not a lot.
+      { id: id(), unit_id: null, item_type: "fob", purpose: "master", identifier: "M-01", label: "Master - all common areas", status: "issued", issued_to: "Marcus Hale (building manager)" },
+      { id: id(), unit_id: null, item_type: "key", purpose: "master", identifier: "M-02", label: "Master - plant and switch rooms", status: "issued", issued_to: null },
+      { id: id(), unit_id: null, item_type: "key", purpose: "service", identifier: "SVC-07", label: "Lift motor room - Sunshine Lifts", status: "issued", issued_to: "Sunshine Lifts Pty Ltd" },
+      { id: id(), unit_id: null, item_type: "other", purpose: "other", identifier: "LB-01", label: "Emergency access lock box", status: "issued", issued_to: null, notes: "Combination held by the committee chair and the building manager." },
       ...DR.access,
     ],
     breaches: [{ id: id(), unit_id: "unit-12", bylaw_ref: "By-law 12 (Noise)", description: "Late-night noise complaint — resolved after friendly chat.", status: "remedied", occurred_at: dAhead(-40).slice(0, 10) }, ...DR.breaches],
@@ -1544,6 +1596,12 @@ if (DEMO_MODE) {
   addUnitVehicle = async (_b, unitId, row) => { DS.vehicles.push({ id: id(), unit_id: unitId, ...row }); };
   addAccessItem = async (_b, unitId, row) => { DS.access.push({ id: id(), unit_id: unitId, ...row }); };
   updateAccessItemStatus = async (iid, status) => { const x = DS.access.find((a) => a.id === iid); if (x) x.status = status; };
+  listAccessItems = async () => DS.access.map((a) => {
+    const u = DS.units.find((x) => x.id === a.unit_id);
+    return { ...a, building_id: "b-demo", purpose: a.purpose || "resident",
+      unit_number: u ? u.unit_number : "",
+      occupants: DS.people.filter((p) => p.unit_id === a.unit_id && p.is_current !== false).map((p) => p.full_name) };
+  });
   acknowledgeAccessItem = async () => ({ ok: true });
   addUnitBreach = async (_b, unitId, row) => { DS.breaches.push({ id: id(), unit_id: unitId, status: "open", ...row }); };
   updateUnitAgent = async (_b, unitId, agent) => { const u = DS.units.find((x) => x.id === unitId); if (u) { u.agent_business = agent.business; u.agent_contact = agent.contact; u.agent_phone = agent.phone; u.agent_email = agent.email; u.agent_note = agent.note; } };

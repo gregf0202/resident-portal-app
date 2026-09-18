@@ -2,8 +2,10 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-05 · App version: v0.31.3 (Add to Home Screen steps for iOS 26
-> Compact layout; v0.31.1 and v0.31.2 back-filled below). Nothing pending.
+> Last updated: 2026-09-18 · App version: v0.32.0 (Key & Fob Register reads the real
+> access-item table; Type + Purpose descriptors; building-level devices). Nothing pending.
+> Earlier: v0.31.3 Add to Home Screen steps for iOS 26 Compact layout; v0.31.1/v0.31.2
+> back-filled below.
 > Note: the copy of this file in the Claude Project knowledge lags this Drive master (it was
 > still at v0.25.0 on 5 Sep). Drive is the source of truth; read the version line in
 > `src/ResidentPortal.jsx` before stating a current version.
@@ -189,6 +191,21 @@ Finder; the paths in this file are what he needs to put each file in the right f
 
 - Project **NaloHub (prod):** ref `lipwcsihcxndwwgzhiia`, region `ap-southeast-2`.
 - Migrations applied to prod live in `supabase/migrations/`.
+- **`unit_access_items.purpose` (migration 0013, APPLIED to prod 18 Sep 2026).** `text NOT NULL
+  DEFAULT 'resident'`, CHECK `resident|master|service|other`, plus `(building_id, purpose)` and
+  `(building_id, identifier)` indexes for the building-wide register read. Deliberately a SECOND
+  axis rather than more `item_type` values: `item_type` is what the device IS (key / fob / remote /
+  swipe_card / digital_card / other), `purpose` is what it is FOR, so a master fob is still a fob
+  and can be filtered as one. The 230 Curve rows backfilled to `resident`, which is accurate: they
+  are lot-allocated devices. `unit_health_check` returns the field with no change, because its
+  `access_items` branch uses `to_jsonb(a)`.
+- **`unit_access_items.unit_id` is now NULLABLE (migration 0014, APPLIED to prod 18 Sep 2026).**
+  A master key, a service key or a lock box belongs to the building, not a lot. `unit_id NOT NULL`
+  is why the Curve import had to skip the Building Manager, Fire Warden Key Set and Emergency
+  Access Lock Box rows. Safe for every read path: `unit_health_check` inner-joins `units` on
+  `unit_id` so building-level rows never appear under a unit (correct), RLS keys off `building_id`
+  and `issued_to_user_id`, and `exportBuildingData` selects by `building_id`. The register renders
+  a null `unit_id` as "Common property".
 - **`documents_meta` view + `documents_preserve_file` trigger (migration 0005, APPLIED to prod
   1 Aug 2026).** `loadBuildingStore` now reads documents through `documents_meta`
   (`data - 'fileData'`, `security_invoker = true`, so the RLS on `documents` still governs who
@@ -299,7 +316,11 @@ release; if this header disagrees with it, the header is wrong.
 
 ## 11. Recent history (high level)
 
-- **v0.31.3 (current, 5 Sep 2026):** Add to Home Screen instructions rewritten to cover iOS 26
+- **v0.32.0 (current, 18 Sep 2026):** Key & Fob Register repointed from the legacy
+  `store.keyfobs` JSONB store to `unit_access_items`, the table Unit Search already used. Search by
+  unit / resident name / key number, Type + Purpose descriptors (migrations 0013/0014), honest
+  "Holder not recorded" rather than an inferred holder. See changelog.
+- **v0.31.3 (5 Sep 2026):** Add to Home Screen instructions rewritten to cover iOS 26
   Compact layout (Share icon, or "..." then Share) in `src/components/AddToHomeScreen.jsx` and
   the Getting Started tour step in `ResidentPortal.jsx`. See changelog.
 - **v0.31.2:** `UpdateBanner` exported from `ResidentPortal.jsx` and mounted in `App.jsx`;
@@ -366,6 +387,62 @@ release; if this header disagrees with it, the header is wrong.
 ---
 
 ## Changelog
+
+### v0.32.0 — Key & Fob Register reads the real table (18 Sep 2026)
+
+`src/ResidentPortal.jsx` (the whole `KeyFobRegister` block rewritten, one db import, the
+version line) + `src/db.js` (one new function, one demo shim, four demo rows) +
+migrations 0013 and 0014. Demo + production builds verified green.
+
+- **Cause. There were two key registers and they were never connected.** The screen
+  labelled "Key & Fob Register" read `store.keyfobs`, the legacy JSONB content table.
+  Every access item added through Unit Search, and every row of the 30 Aug Curve
+  Birtinya bulk import, went to `unit_access_items`. So Curve held **230 real keys
+  across 54 units, each with a key number, all invisible on the register** while
+  `keyfobs` held exactly one row for that building. The data was never lost or
+  mis-imported: the screen was reading the wrong table. Reported as "the Key & Fob data
+  did not make it to the Register".
+- **Fix.** New `listAccessItems(bid)` in `db.js` reads `unit_access_items` building-wide
+  (three queries, not an embed, mirroring `listUnitsOverview`) and stitches on
+  `unit_number` plus `occupants` (current `unit_people`). `KeyFobRegister` renders that,
+  with one search box covering **unit number, resident name and key number**, status
+  chips, and Type and Purpose menus. Editing, status changes and deletion reuse the
+  existing v0.29.0 `updateAccessItem` / `deleteAccessItem`, so RLS
+  (`can_edit_unit_registry`) is unchanged.
+- **Type + Purpose, not one longer list.** Keys/Fobs/Cards describe what a device IS;
+  Master/Service describe what it is FOR. Folding all six into `item_type` would make
+  "master fob" unexpressible and would force every existing row to pick one. `purpose`
+  is therefore a second axis (migration 0013). `item_type` already permitted `other` at
+  the DB level but the dropdown never offered it; it does now.
+- **Holder honesty — the deliberate non-feature.** All 230 Curve rows have no
+  `issued_to`: a BM register records a key against a lot, not a person. `occupants` is
+  used for SEARCH only. A row with no holder reads **"Holder not recorded"** in amber,
+  with the unit's occupants shown beneath as context explicitly labelled *not* a record
+  of who holds it. An inferred holder column is worse than an empty one the moment
+  anyone relies on it in a dispute. A tile counts how many devices lack a holder, so the
+  gap is visible instead of hidden. Verified: every Curve unit holding keys has occupants
+  recorded, so name search reaches all 230 rows.
+- **Building-level devices (migration 0014).** `unit_id` was NOT NULL, so master/service
+  devices and the lock box had nowhere to live. Now nullable; those rows sort FIRST and
+  render as "Common property". This closes the gap that made the 30 Aug import skip the
+  Building Manager, Fire Warden Key Set and Emergency Access Lock Box rows.
+- **Legacy rows are merged, not migrated.** The four remaining `keyfobs` rows appear
+  read-only with a "legacy register" badge, the same treatment Unit Search gives them.
+  Not migrated because two of the four name SeaHaven unit 828, which has no `units`
+  record — inventing lot records to satisfy a foreign key is worse than badging them.
+- **CSV.** Template and upload now target the real table (`unit`, `type`, `purpose`,
+  `identifier`, `label`, `holder`, `status`, `notes`; blank `unit` means a building
+  device), plus a new "Download register" export of the current filtered view. Upload
+  inserts row by row and reports how many could not be added.
+- **Traps avoided.** `AccessItemForm` is declared at MODULE level and the row renderer is
+  a plain `row(r)` call with `key` on the returned Card — the nested-component remount
+  trap this file has had three times. The load is NOT gated on `backend`, which is what
+  left Unit Search empty in v0.29.1.
+- **Deliberately not done.** The NAV entry stays committee-only: `show(role)` receives
+  only the role, so it cannot read the per-building `bmRegistryWrite` switch, and showing
+  the page to a BM whose switch is off would render an empty list (RLS returns no rows).
+  Write controls already honour the switch via `canEdit`. Opening the register to the BM
+  needs `navVisibleFor` to pass the building into `show`, which is a wider change.
 
 ### v0.31.3 — Add to Home Screen for iOS 26 Compact layout (5 Sep 2026)
 
