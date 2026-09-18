@@ -2,8 +2,8 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-18 · App version: v0.32.0 (Key & Fob Register reads the real
-> access-item table; Type + Purpose descriptors; building-level devices). Nothing pending.
+> Last updated: 2026-09-18 · App version: v0.32.1 (Key & Fob Register counters follow the
+> search; v0.32.0 repointed the register at the real access-item table). Nothing pending.
 > Earlier: v0.31.3 Add to Home Screen steps for iOS 26 Compact layout; v0.31.1/v0.31.2
 > back-filled below.
 > Note: the copy of this file in the Claude Project knowledge lags this Drive master (it was
@@ -316,7 +316,10 @@ release; if this header disagrees with it, the header is wrong.
 
 ## 11. Recent history (high level)
 
-- **v0.32.0 (current, 18 Sep 2026):** Key & Fob Register repointed from the legacy
+- **v0.32.1 (current, 18 Sep 2026):** Key & Fob Register tiles and status chips now describe
+  the current search instead of the whole register, which is what made a working search look
+  broken. Occupant names de-duplicated. See changelog.
+- **v0.32.0 (18 Sep 2026):** Key & Fob Register repointed from the legacy
   `store.keyfobs` JSONB store to `unit_access_items`, the table Unit Search already used. Search by
   unit / resident name / key number, Type + Purpose descriptors (migrations 0013/0014), honest
   "Holder not recorded" rather than an inferred holder. See changelog.
@@ -387,6 +390,44 @@ release; if this header disagrees with it, the header is wrong.
 ---
 
 ## Changelog
+
+### v0.32.1 — the counters have to follow the search (18 Sep 2026)
+
+`src/ResidentPortal.jsx` (`KeyFobRegister` filtering + header) and `src/db.js` (occupant
+de-dup). No schema or migration change. Demo + production builds verified green.
+
+- **Cause.** v0.32.0 computed `shown` (the list) from the search and filters, but computed
+  the three tiles and every status chip from `all`. So searching "Ferguson" on Curve
+  correctly narrowed 231 devices to the 2 at unit 606, while the tiles still read
+  **231 devices / 55 units / 230 no holder** and the chips still read **All 231 · Issued
+  231**. The list underneath was right. Reported, reasonably, as "search function not
+  working": a list that changes while every number beside it insists nothing happened is
+  indistinguishable from a dead search box, and the "Showing 2 of 231" line was below the
+  fold on a phone.
+- **Fix.** Filtering is split in two. `base` applies the search box and the Type/Purpose
+  menus; `shown` applies the status chip on top of `base`. Tiles and chip counts both read
+  from `base`, so a chip says how many of *the current search* are issued rather than how
+  many of the building. `counts.registerTotal` keeps the building-wide figure for context.
+- **Feedback added.** A result line sits directly above the tiles whenever anything is
+  filtered: "N of M devices matching X · K units", with a Clear action that resets the
+  search, both menus and the chip. The first tile relabels to "Devices found". The empty
+  state gains a "Clear the search" button.
+- **The whole-register no-holder notice now hides while filtering.** It is a data-quality
+  signal about the register as a whole; repeating "2 of 2 devices have no holder recorded"
+  over a two-row search result is noise.
+- **Occupant de-duplication (`listAccessItems`).** One person can legitimately hold two
+  `unit_people` rows for the same lot. Curve unit 606 has Debbie Ferguson as both owner
+  and emergency contact, so she was listed twice under every key for that unit. Names are
+  now de-duplicated case-insensitively.
+- **Standing rule this establishes.** Any count rendered beside a filtered list must be
+  computed from the same filtered set, or it actively contradicts the list. Where a
+  whole-population figure is genuinely wanted, label it and show it alongside, never in
+  place of, the filtered one.
+- **Verified** with a 17-assertion logic test over a 231-row fixture shaped like live
+  Curve (230 imported rows with no holder, plus the merged legacy row that has one):
+  "Ferguson" gives 2 rows / 2 tile devices / 1 unit / 2 issued / 0 returned, key-number and
+  unit searches give 1 and 2, a type filter gives 1, and a search combined with a
+  non-matching chip gives 0 rows while the tiles stay on the search.
 
 ### v0.32.0 — Key & Fob Register reads the real table (18 Sep 2026)
 

@@ -509,11 +509,16 @@ export async function listAccessItems(bid) {
     if (pe) throw pe;
     people = pp || [];
   }
+  // De-duplicated by name: one person can legitimately hold two unit_people rows
+  // for the same lot (Curve unit 606 has Debbie Ferguson as both owner and
+  // emergency contact), which listed her twice in the register.
   const occ = {};
   people.forEach((p) => {
     if (p.is_current === false) return;
     const n = (p.full_name || "").trim();
-    if (n) (occ[p.unit_id] = occ[p.unit_id] || []).push(n);
+    if (!n) return;
+    const list = (occ[p.unit_id] = occ[p.unit_id] || []);
+    if (!list.some((x) => x.toLowerCase() === n.toLowerCase())) list.push(n);
   });
 
   return items.map((a) => ({
