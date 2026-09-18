@@ -10,6 +10,7 @@
 //   audience "owners"   -> active owners with an email
 //   audience "specific" -> the memberships whose id is in recipientIds
 // Addresses are placed in BCC so residents never see each other's email.
+// Replies route to the building's NaloHub inbox (reply_to) so they land in-app.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -82,29 +83,50 @@ Deno.serve(async (req) => {
   const senderName = `${buildingName} via NaloHub`.replace(/"/g, "");
   const posterName = mine?.full_name || (posterRole === "strata" ? "Strata manager" : "Your committee");
 
+  // Route replies INTO the app: reply-to the building's NaloHub inbox so a
+  // resident's reply lands in Correspondence, not a personal mailbox. Falls back
+  // to the committee email only if no mailbox exists yet.
+  const { data: mbx } = await db.from("building_mailboxes").select("slug, inbound_address").eq("building_id", buildingId).maybeSingle();
+  const inboxAddress = mbx ? (mbx.inbound_address || `${mbx.slug}@${MAIL_DOMAIN}`) : null;
+  const replyTo = inboxAddress || bccEmail;
+
+  // Send FROM the building's own inbound address, never a no-reply placeholder.
+  //
+  // Why this matters more than it looks: Resend requires `to` even when every
+  // real recipient sits in BCC, and whatever is in `from`/`to` is what a
+  // resident's REPLY ALL targets. With no-reply@<domain> in both, a Reply All
+  // went to reply_to AND to no-reply@, and because Receiving is enabled for the
+  // whole domain that produced TWO inbound webhooks: one filed to the building,
+  // the other resolved the slug "no-reply", found no mailbox, and became an
+  // orphan row with building_id null, invisible in every Unfiled tray. Putting
+  // the building's address in all three slots collapses that to one delivery.
+  // It also stops the header contradicting the footer: a message whose From
+  // says no-reply while its footer invites a reply teaches residents not to.
+  const senderAddress = inboxAddress || `no-reply@${MAIL_DOMAIN}`;
+
   if (!RESEND_API_KEY) return json({ ok: false, sent: 0, error: "email provider not configured" }, 200);
 
   const audLabel = aud === "owners" ? "owners" : aud === "specific" ? "selected residents" : "residents";
   const footer =
-    `\n\n—\nThis notice was posted in NaloHub for ${buildingName} and emailed to ${audLabel}.` +
-    `${bccEmail ? ` Reply to reach your committee at ${bccEmail}.` : ""}\nBe In The Nalo 👋`;
+    `\n\nThis notice was posted in NaloHub for ${buildingName} and emailed to ${audLabel}.` +
+    `${replyTo ? ` Reply to this email and it lands with your committee in NaloHub.` : ""}\nBe In The Nalo 👋`;
   const html =
     `<div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px">` +
     `<h2 style="margin:0 0 8px">${esc(subject)}</h2>` +
     `<div style="white-space:pre-wrap;font-size:15px;line-height:1.5">${esc(bodyText || "")}</div>` +
     `<hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0"/>` +
     `<div style="font-size:12px;color:#6b7280">Posted by ${esc(posterName)} · ${esc(buildingName)} via NaloHub` +
-    `${bccEmail ? ` · reply to <a href="mailto:${esc(bccEmail)}">${esc(bccEmail)}</a>` : ""}</div></div>`;
+    `${replyTo ? ` · reply and it lands in your building's NaloHub` : ""}</div></div>`;
 
   const payload: any = {
-    from: `"${senderName}" <no-reply@${MAIL_DOMAIN}>`,
-    to: [`no-reply@${MAIL_DOMAIN}`],
+    from: `"${senderName}" <${senderAddress}>`,
+    to: [senderAddress],
     bcc: emails,
     subject,
     text: (bodyText || "") + footer,
     html,
   };
-  if (bccEmail) payload.reply_to = bccEmail;
+  if (replyTo) payload.reply_to = replyTo;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {

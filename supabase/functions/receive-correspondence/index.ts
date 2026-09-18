@@ -79,23 +79,40 @@ Deno.serve(async (req) => {
   if (dupe) return ok({ deduped: true, raw_id: dupe.id });
 
   // 3. Work out which mailbox/thread this was for (from the plus-address token).
+  // received_for is the address Resend actually accepted delivery for, so it is
+  // the authoritative one; `to` and `cc` are whatever the sender happened to
+  // type, which on a reply-all includes addresses that are not this building.
   const recipients: string[] = [
-    ...(Array.isArray(d.to) ? d.to : []),
     ...(Array.isArray(d.received_for) ? d.received_for : []),
+    ...(Array.isArray(d.to) ? d.to : []),
     ...(Array.isArray(d.cc) ? d.cc : []),
   ];
-  let slug: string | null = null;
   let tokenThreadId: string | null = null;
+  const slugCandidates: string[] = [];
   for (const addr of recipients) {
-    const m = /([a-z0-9-]+)\+([0-9a-fA-F-]{36})@/.exec(String(addr));
-    if (m) { slug = m[1]; tokenThreadId = m[2]; break; }
-    const m2 = /([a-z0-9-]+)@/.exec(String(addr)); // slug without token (new inbound to a mailbox)
-    if (!slug && m2 && String(addr).includes(MAIL_DOMAIN)) slug = m2[1];
+    const a = String(addr).toLowerCase();
+    if (!a.includes(MAIL_DOMAIN)) continue;
+    const mTok = /([a-z0-9][a-z0-9._-]*)\+([0-9a-f-]{36})@/.exec(a);
+    if (mTok) { if (!tokenThreadId) tokenThreadId = mTok[2]; slugCandidates.push(mTok[1]); continue; }
+    const mPlain = /([a-z0-9][a-z0-9._-]*)@/.exec(a);
+    if (mPlain) slugCandidates.push(mPlain[1]);
   }
+
+  // A reply-all names SEVERAL of our addresses at once, so take the one that is
+  // actually a building mailbox rather than whichever parsed first.
+  //
+  // This is the orphan fix. Announcements used to go out From/To
+  // no-reply@<domain>, so a resident's Reply All arrived addressed to both the
+  // building's inbox and no-reply@. The old loop took the first address it could
+  // parse; when that was "no-reply" the mailbox lookup found nothing, buildingId
+  // stayed null, and the row landed in no building's Unfiled tray at all,
+  // invisible and unrecoverable through the UI. Six rows reached that state.
   let buildingId: string | null = null;
-  if (slug) {
-    const { data: mb } = await db.from("building_mailboxes").select("building_id").eq("slug", slug).maybeSingle();
-    buildingId = mb?.building_id || null;
+  const uniqueSlugs = Array.from(new Set(slugCandidates));
+  if (uniqueSlugs.length) {
+    const { data: mbs } = await db.from("building_mailboxes")
+      .select("slug, building_id").in("slug", uniqueSlugs);
+    if (mbs && mbs.length) buildingId = mbs[0].building_id;
   }
 
   // 4. DURABILITY FIRST — fetch full content, store raw, insert inbound_raw. --
@@ -137,13 +154,29 @@ Deno.serve(async (req) => {
   const autoSubmitted = String(headers["auto-submitted"] || "").toLowerCase();
   const precedence = String(headers["precedence"] || "").toLowerCase();
   const subject: string = d.subject || full?.subject || "";
-  const isAuto = (autoSubmitted && autoSubmitted !== "no") || ["bulk", "list", "junk"].includes(precedence) || /^\s*(auto(matic)?[- ]?reply|out of office)/i.test(subject);
+  const isAuto = (autoSubmitted && autoSubmitted !== "no")
+    || ["bulk", "list", "junk"].includes(precedence)
+    || !!headers["x-autoreply"] || !!headers["x-autorespond"] || !!headers["x-auto-response-suppress"]
+    || /^\s*(auto(matic)?[- ]?reply|out of office)/i.test(subject);
   if (isAuto) {
     await db.from("correspondence_inbound_raw").update({ status: "ignored_auto", processed_at: new Date().toISOString() }).eq("id", rawId);
     return ok({ ignored: "auto-responder", raw_id: rawId });
   }
 
   const { name: fromName, email: fromEmail } = parseFrom(d.from || full?.from || "");
+
+  // 5b. Mail whose SENDER is our own domain is our own outbound returning: an
+  // announcement addressed to the building's inbox because Resend requires a
+  // `to` even when every recipient is in BCC, or the old no-reply@ placeholder.
+  // It is never correspondence, and dropping it in the Unfiled tray asks the
+  // committee to triage its own notices. Three rows reached the tray this way.
+  if (fromEmail && fromEmail.endsWith(`@${MAIL_DOMAIN}`)) {
+    await db.from("correspondence_inbound_raw").update({
+      status: "ignored_self", processed_at: new Date().toISOString(),
+      from_name: fromName, from_email: fromEmail, subject,
+    }).eq("id", rawId);
+    return ok({ ignored: "own-domain", raw_id: rawId });
+  }
 
   // 6. Resolve the thread: token first, then sender+subject, else Unfiled. ----
   let threadId: string | null = null;
@@ -166,12 +199,16 @@ Deno.serve(async (req) => {
   if (!threadId) {
     // 7. Unfiled — durably held for committee triage; never discarded.
     // Store display + content fields so the committee can see and file it.
+    // A row with no building cannot be filed by anyone: corr_unfiled is scoped
+    // by building, and corr_file_unfiled_new_thread refuses it outright. Mark it
+    // 'unrouted' rather than 'unfiled' so it stops pretending to be triageable,
+    // while still keeping every field for inspection.
     await db.from("correspondence_inbound_raw").update({
-      status: "unfiled", building_id: buildingId,
+      status: buildingId ? "unfiled" : "unrouted", building_id: buildingId,
       from_name: fromName, from_email: fromEmail, subject,
       body_text: full?.text || null, body_html: full?.html || null,
     }).eq("id", rawId);
-    return ok({ unfiled: true, raw_id: rawId });
+    return ok({ unfiled: !!buildingId, unrouted: !buildingId, raw_id: rawId });
   }
 
   // 8. Insert the inbound message (append-only; content_hash set by trigger). -

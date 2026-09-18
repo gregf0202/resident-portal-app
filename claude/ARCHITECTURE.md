@@ -2,8 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-18 · App version: v0.32.1 (Key & Fob Register counters follow the
-> search; v0.32.0 repointed the register at the real access-item table). Nothing pending.
+> Last updated: 2026-09-18 · App version: v0.33.0 (Correspondence can file an inbound
+> email as a new thread, and is searchable; announcements send from the building's own
+> address). Nothing pending.
 > Earlier: v0.31.3 Add to Home Screen steps for iOS 26 Compact layout; v0.31.1/v0.31.2
 > back-filled below.
 > Note: the copy of this file in the Claude Project knowledge lags this Drive master (it was
@@ -191,6 +192,11 @@ Finder; the paths in this file are what he needs to put each file in the right f
 
 - Project **NaloHub (prod):** ref `lipwcsihcxndwwgzhiia`, region `ap-southeast-2`.
 - Migrations applied to prod live in `supabase/migrations/`.
+- **Correspondence filing + search (migrations 0015, 0016, APPLIED to prod 18 Sep 2026).**
+  `corr_file_unfiled_new_thread` (SECURITY DEFINER, committee-guarded, EXECUTE revoked from
+  `anon`); `correspondence_messages.search_tsv` generated tsvector + GIN index;
+  `corr_search(building, q)` **SECURITY INVOKER** so existing RLS governs visibility. 0016
+  switches `ts_headline` to guillemet delimiters so no email HTML reaches the client.
 - **`unit_access_items.purpose` (migration 0013, APPLIED to prod 18 Sep 2026).** `text NOT NULL
   DEFAULT 'resident'`, CHECK `resident|master|service|other`, plus `(building_id, purpose)` and
   `(building_id, identifier)` indexes for the building-wide register read. Deliberately a SECOND
@@ -316,7 +322,11 @@ release; if this header disagrees with it, the header is wrong.
 
 ## 11. Recent history (high level)
 
-- **v0.32.1 (current, 18 Sep 2026):** Key & Fob Register tiles and status chips now describe
+- **v0.33.0 (current, 18 Sep 2026):** Correspondence: an unfiled inbound email can start its
+  own thread (migration 0015), search covers subjects, parties and message bodies (0015/0016),
+  announcements send from the building's own address rather than no-reply@, and the receiver
+  ignores our own domain. See changelog.
+- **v0.32.1 (18 Sep 2026):** Key & Fob Register tiles and status chips now describe
   the current search instead of the whole register, which is what made a working search look
   broken. Occupant names de-duplicated. See changelog.
 - **v0.32.0 (18 Sep 2026):** Key & Fob Register repointed from the legacy
@@ -390,6 +400,87 @@ release; if this header disagrees with it, the header is wrong.
 ---
 
 ## Changelog
+
+### v0.33.0 — Correspondence: filing and search (18 Sep 2026)
+
+`src/ResidentPortal.jsx`, `src/db.js`, migrations 0015 and 0016, plus edge functions
+`send-announcement` v6 and `receive-correspondence` v11 (both deployed 18 Sep).
+Demo + production builds verified green.
+
+**1. The day-one filing hole.** `corr_file_unfiled(p_raw, p_thread)` requires an EXISTING
+thread, and the only way to create a thread was `sendCorrespondence`, which sends a real
+email. So the first inbound email for any building could never be filed: you had to email
+someone before you could file anything. Curve Birtinya had **0 threads, 0 contacts and 7
+unfiled items**, and the File button was permanently disabled because its thread picker
+was empty. Reported as "only option is File to Thread, no action taken".
+
+- New `corr_file_unfiled_new_thread(p_raw, p_subject, p_contact_name, p_party_type, p_org)`
+  creates the thread from the email itself and **sends nothing**. It matches the sender to
+  an existing contact by lowercased email before creating one, so filing two emails from
+  the same person does not produce two contacts. Guarded by `corr_is_committee`, EXECUTE
+  revoked from `anon`.
+- It **refuses a row with `building_id` null** rather than guessing: there is no scheme to
+  file into and nothing for the committee check to check against.
+- The tray now offers both paths, with "File as a new thread" primary when no threads
+  exist yet, plus a filter once there are more than three items.
+
+**2. The silently dead button.** `assignUnfiled` opened with a bare `if (!threadId) return;`
+and the button was `disabled` with no explanation. Exactly the class the v0.29.2 audit
+called out. It now says what to do instead.
+
+**3. Search.** A generated `search_tsv` on `correspondence_messages` over subject, sender
+name, sender email and body, with a GIN index. `corr_search(building, q)` is **SECURITY
+INVOKER on purpose**: the RLS on threads and messages already encodes who sees what,
+including the restricted-thread rule that keeps the BM and MSC out, and a SECURITY DEFINER
+version would be a second copy of the access model free to drift from the first.
+
+- **Highlighting does not use HTML.** `ts_headline` defaults to `<b>`/`</b>`, and rendering
+  that would mean reintroducing `dangerouslySetInnerHTML` on inbound email content, which
+  is the exact sink the 5 Aug XSS review removed (zero remain). Migration 0016 sets
+  `StartSel=«, StopSel=»`; the client splits on the guillemets and emphasises the matched
+  run as ordinary JSX. Verified against a real body containing `<quattrors50@gmail.com>`:
+  no HTML crosses the boundary, so there is nothing to escape and nothing to trust.
+
+**4. no-reply@ was the root cause of the orphans.** `send-announcement` sent
+`from`/`to` = `no-reply@<domain>` with `reply_to` = the building inbox. Resend requires a
+`to` even when every recipient is in BCC, and `from`/`to` is what **Reply All** targets. So
+a resident's reply-all went to the building inbox AND to no-reply@, and since Receiving is
+enabled domain-wide that fired **two** webhooks: one filed, the other resolved the slug
+"no-reply", found no mailbox, and became an orphan with `building_id` null, invisible in
+every tray. The `to` copy also meant **every announcement was delivered back into our own
+inbound webhook**.
+
+- v6 sends from the building's own inbound address in all three slots, so Reply and Reply
+  All both land in exactly one place. It also stops the header contradicting the footer: a
+  From of no-reply beside a footer inviting a reply teaches residents not to.
+- v11 of the receiver resolves the building across **all** recipients preferring one that
+  is a real mailbox, prioritises `received_for` (the address Resend actually accepted) over
+  `to`/`cc`, and **ignores mail whose sender is our own domain** as `ignored_self` so the
+  announcement echo never reaches the tray. Without that second change the sender fix would
+  have made things worse: the self-copy would now resolve to the building and appear as a
+  tray item on every notice. **The two changes are coupled and must ship together.**
+- Auto-responder detection gained header signals (`x-autoreply`, `x-autorespond`,
+  `x-auto-response-suppress`). Deliberately NOT loose subject matching: a false positive
+  silently hides a real email, which is worse than an extra tray item. The out-of-office
+  that slipped through ("We are away from tomorrow morning and back on Monday") came from
+  our own domain, so the ignore-self rule catches it anyway.
+- A row that still routes nowhere is marked **`unrouted`**, not `unfiled`, so it stops
+  masquerading as triageable: `corr_unfiled` only returns `unfiled`.
+
+**5. Orphan cleanup (data, 18 Sep).** Six rows had `building_id` null. Three were reply-all
+duplicates of mail that filed correctly, now `ignored_duplicate`; three were our own
+announcements, now `ignored_self`. **No resident email was lost** and nothing was deleted:
+all 23 inbound rows are intact, status changes only. An earlier note in this session said
+nine rows with resident replies at risk; that was wrong on both counts.
+
+**6. Verified.** `corr_file_unfiled_new_thread` tested end to end as a real committee user
+via `set_config('request.jwt.claims', …)`: thread created with the subject carried over,
+contact created from the sender, inbound message linked back to its raw row, tray 7 → 6,
+and the result findable by both message and thread search. The null-building row was
+correctly refused and left `unfiled`. **The append-only guard was confirmed by accident**:
+the attempt to reverse the test filing was rejected by `corr_messages_guard`
+("hard delete is not permitted"), so the test thread remains at Curve as a real filed
+email. That guard working is worth more than a tidy tray.
 
 ### v0.32.1 — the counters have to follow the search (18 Sep 2026)
 

@@ -982,6 +982,45 @@ export async function fileCorrUnfiled(rawId, threadId) {
   return data;
 }
 
+// File an unfiled item as a BRAND NEW thread. No email is sent.
+//
+// Why this exists: corr_file_unfiled requires an existing thread, and the only
+// way to create one was sendCorrespondence, which sends a real email. So the
+// first inbound email for any building could never be filed. Curve Birtinya had
+// 0 threads, 0 contacts and 7 unfiled items with nowhere to put them, and the
+// File button sat permanently disabled because its thread picker was empty.
+// The RPC matches the sender to an existing contact or creates one, so filing
+// two emails from the same person does not produce two contacts.
+export async function fileCorrUnfiledNewThread(rawId, opts) {
+  const o = opts || {};
+  const { data, error } = await supabase.rpc("corr_file_unfiled_new_thread", {
+    p_raw: rawId,
+    p_subject: o.subject || null,
+    p_contact_name: o.contactName || null,
+    p_party_type: o.partyType || null,
+    p_org: o.org || null,
+  });
+  if (error) throw error;
+  return data; // new thread id
+}
+
+// Search the building's correspondence: message bodies and subjects via the
+// generated tsvector, plus thread subject and contact name/email/org. The RPC is
+// SECURITY INVOKER, so the existing RLS decides what comes back and restricted
+// threads stay hidden from the BM and MSC without a second copy of that rule.
+export async function searchCorrespondence(bid, q) {
+  const term = String(q || "").trim();
+  if (!term) return [];
+  const { data, error } = await supabase.rpc("corr_search", { p_building: bid, p_q: term });
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    threadId: r.thread_id, threadSubject: r.thread_subject,
+    contactName: r.contact_name, contactEmail: r.contact_email, threadStatus: r.thread_status,
+    messageId: r.message_id, direction: r.direction,
+    matchedIn: r.matched_in, snippet: r.snippet, occurredAt: r.occurred_at,
+  }));
+}
+
 // ---- monthly walk-through checklist ----------------------------------------
 export async function listWalkItems(bid) {
   const { data, error } = await supabase.from("walkthrough_items").select("*").eq("building_id", bid).eq("active", true).order("sort");
@@ -1655,6 +1694,52 @@ if (DEMO_MODE) {
   setCorrThreadMembers = async () => {};
   corrAttachmentUrl = async () => "";
   listCorrUnfiled = async () => [...DS.corr.unfiled];
+  fileCorrUnfiledNewThread = async (rawId, opts) => {
+    const o = opts || {};
+    const i = DS.corr.unfiled.findIndex((u) => u.id === rawId);
+    const u = i >= 0 ? DS.corr.unfiled[i] : null;
+    if (!u) throw new Error("unfiled item not found");
+    DS.corr.unfiled.splice(i, 1);
+    let contact = DS.corr.contacts.find((c) => (c.email || "").toLowerCase() === (u.fromEmail || "").toLowerCase());
+    if (!contact) {
+      contact = { id: id(), name: o.contactName || u.fromName || u.fromEmail || "Unknown sender",
+        org: o.org || "", email: u.fromEmail || "", phone: "",
+        partyType: o.partyType || "other", party_type: o.partyType || "other", notes: "" };
+      DS.corr.contacts.push(contact);
+    }
+    const t = { id: id(), buildingId: "b-demo", subject: o.subject || u.subject || "(no subject)",
+      status: "open", visibility: "committee", contextType: "general", contextId: null,
+      createdBy: DEMO_UID, createdAt: now(), lastActivityAt: now(), contact,
+      messages: [{ id: id(), direction: "inbound", fromName: u.fromName, fromEmail: u.fromEmail,
+        toEmail: corrMB, cc: null, subject: u.subject, bodyText: u.body || "", bodyHtml: null,
+        deliveryStatus: null, deletedAt: null, createdAt: now(), attachments: [] }] };
+    DS.corr.threads.unshift(t);
+    return t.id;
+  };
+  searchCorrespondence = async (_b, q) => {
+    const needle = String(q || "").trim().toLowerCase();
+    if (!needle) return [];
+    const out = [];
+    DS.corr.threads.forEach((t) => {
+      const c = t.contact || {};
+      if ([t.subject, c.name, c.email, c.org].filter(Boolean).join(" ").toLowerCase().includes(needle)) {
+        out.push({ threadId: t.id, threadSubject: t.subject, contactName: c.name, contactEmail: c.email,
+          threadStatus: t.status, messageId: null, direction: null, matchedIn: "thread", snippet: null,
+          occurredAt: t.lastActivityAt });
+      }
+      (t.messages || []).forEach((m) => {
+        const body = String(m.bodyText || "");
+        if ([m.subject, m.fromName, m.fromEmail, body].filter(Boolean).join(" ").toLowerCase().includes(needle)) {
+          const at = body.toLowerCase().indexOf(needle);
+          out.push({ threadId: t.id, threadSubject: t.subject, contactName: c.name, contactEmail: c.email,
+            threadStatus: t.status, messageId: m.id, direction: m.direction, matchedIn: "message",
+            snippet: at >= 0 ? body.slice(Math.max(0, at - 60), at + 120).replace(/\s+/g, " ") : (m.subject || ""),
+            occurredAt: m.createdAt });
+        }
+      });
+    });
+    return out.sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1)).slice(0, 100);
+  };
   fileCorrUnfiled = async (rawId, tid) => { const i = DS.corr.unfiled.findIndex((u) => u.id === rawId); const u = i >= 0 ? DS.corr.unfiled[i] : null; if (i >= 0) DS.corr.unfiled.splice(i, 1); const t = DS.corr.threads.find((x) => x.id === tid); if (t && u) { t.messages.push({ id: id(), direction: "inbound", fromName: u.fromName, fromEmail: u.fromEmail, toEmail: corrMB, cc: null, subject: u.subject, bodyText: u.body || "(Filed from the Unfiled tray.)", bodyHtml: null, deliveryStatus: null, deletedAt: null, createdAt: now(), attachments: [] }); t.lastActivityAt = now(); } return "demo-msg"; };
   listApplications = async () => [...DS.applications].sort((a, b) => (a.submitted_at < b.submitted_at ? 1 : -1));
   createApplication = async (_b, _uid, unitId, kind, category, title, details) => {
