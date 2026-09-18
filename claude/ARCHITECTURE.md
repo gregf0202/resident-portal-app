@@ -2,9 +2,8 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-18 · App version: v0.33.0 (Correspondence can file an inbound
-> email as a new thread, and is searchable; announcements send from the building's own
-> address). Nothing pending.
+> Last updated: 2026-09-18 · App version: v0.33.1 (Back in the body of every screen;
+> party list gained Resident tenant and Building manager). Nothing pending.
 > Earlier: v0.31.3 Add to Home Screen steps for iOS 26 Compact layout; v0.31.1/v0.31.2
 > back-filled below.
 > Note: the copy of this file in the Claude Project knowledge lags this Drive master (it was
@@ -322,7 +321,11 @@ release; if this header disagrees with it, the header is wrong.
 
 ## 11. Recent history (high level)
 
-- **v0.33.0 (current, 18 Sep 2026):** Correspondence: an unfiled inbound email can start its
+- **v0.33.1 (current, 18 Sep 2026):** Back is a button in the body of all 12 screens that have
+  a back target, not only a chip on the header image that scrolls away, plus one at the foot of
+  a thread. Party list gained Resident tenant and Building manager, Agent became Managing agent
+  (migration 0017), and the list is ordered by frequency of dealing. See changelog.
+- **v0.33.0 (18 Sep 2026):** Correspondence: an unfiled inbound email can start its
   own thread (migration 0015), search covers subjects, parties and message bodies (0015/0016),
   announcements send from the building's own address rather than no-reply@, and the receiver
   ignores our own domain. See changelog.
@@ -400,6 +403,41 @@ release; if this header disagrees with it, the header is wrong.
 ---
 
 ## Changelog
+
+### v0.33.1 — Back where you can reach it, and a usable party list (18 Sep 2026)
+
+`src/ResidentPortal.jsx` only, plus migration 0017. Demo + production builds verified green,
+and both changes checked in a real rendered page (headless Chromium against the demo build)
+rather than assumed.
+
+- **Back.** The control existed: `Head` renders an `ArrowLeft` chip when given `onBack`. But it
+  sits inside `AnimatedHeader`, on the image, at the very top, so on any screen taller than the
+  viewport it scrolls out of sight. A correspondence thread is the tallest screen in the app, so
+  that is where it was noticed: *"there is no obvious Back button here, a problem I thought we
+  solved"*. The chip was also easy to miss against the header gradient. New module-level
+  `BackLink` renders in the **body** row alongside the primary action, so all 12 screens with a
+  back target get one, and the thread view gets a second "Back to Correspondence" at its foot.
+  Same reasoning as v0.20.0 moving primary actions out of the header: if it matters, put it where
+  the content is. The header chip stays, for consistency with the Dashboard chip beside it.
+- **Party list.** `corr_party_type` was missing the two parties a committee deals with most after
+  the owner: the **tenant living in the lot** and the **building manager**. Both were being filed
+  as "Other", which is exactly where all 8 existing contacts sat. Migration 0017 adds
+  `resident_tenant` and `building_manager`.
+- **Agent → Managing agent, at the data level.** "Agent" is ambiguous in strata: real-estate
+  agent, letting agent, or the strata manager's agent. Renamed the enum VALUE rather than only
+  its label, so the stored data matches what is displayed. Free to do: zero contacts used
+  `agent` (verified first), and `ALTER TYPE ... RENAME VALUE` relabels in place, so any future
+  row follows automatically. Confirmed no code referenced the string `"agent"` as a party type
+  first; the one grep hit was `units.agent_business`, unrelated.
+- **Order.** `CORR_PARTY`'s key order is what every party dropdown renders, so the list is now
+  ordered by how often a committee deals with each party rather than by the enum's historical
+  sort order: Owner, Resident tenant, Managing agent, Building manager, Strata manager,
+  Contractor, Insurer, Solicitor, Auditor, Council, Other. Verified by reading the rendered
+  `<select>` options out of the live DOM, not from the source.
+  **Managing agent at position 3 is a judgement call:** the requested order omitted it, and
+  owner / tenant / managing agent are the lot-side trio, so it sits with them. Trivial to move.
+- **Labels are sentence case** ("Resident tenant", not "Resident Tenant") to match the existing
+  set. Also a judgement call, also trivial to change.
 
 ### v0.33.0 — Correspondence: filing and search (18 Sep 2026)
 
