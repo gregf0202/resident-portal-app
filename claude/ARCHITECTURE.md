@@ -191,6 +191,21 @@ Finder; the paths in this file are what he needs to put each file in the right f
 
 - Project **NaloHub (prod):** ref `lipwcsihcxndwwgzhiia`, region `ap-southeast-2`.
 - Migrations applied to prod live in `supabase/migrations/`.
+- **Parking permit unit number (migration 0018, WRITTEN 18 Sep 2026 — apply after the
+  frontend ships).** `issue_parking_permit()` previously derived `unit_number` FROM the
+  `units` register via `applications.unit_id`; where that is null the permit issued with
+  `unit_number NULL` and `permit-pdf` printed `UNIT#` followed by nothing. Not an edge case:
+  only 2 of 12 prod buildings have `units` rows, and **no `unit_people` row carries a
+  `user_id`**, so the app cannot resolve a submitter's unit — `details.unit` arrives empty.
+  Inverted: the submitted `details.unit` is authoritative for `unit_number`; the register is
+  consulted best-effort only, to set `unit_id` on a case-insensitive match (Unit Search
+  linkage) and as a fallback when nothing was typed. Deliberately **no** validation against
+  the register — it would reject residents in the ten buildings without one, and the
+  committee sees the unit on the approval card before approving. Duplicate guard, PP-NNNN
+  numbering and the `permit_issued` notification are unchanged. Frontend half: a required
+  Unit field on the permit form, without which the DB fix cannot stop a blank arriving.
+- **PP-0001/PP-0002 (SeaHaven, expired 20 Jul) remain blank** — no unit was ever captured,
+  so there is nothing to backfill from. Left in place deliberately.
 - **Correspondence filing + search (migrations 0015, 0016, APPLIED to prod 18 Sep 2026).**
   `corr_file_unfiled_new_thread` (SECURITY DEFINER, committee-guarded, EXECUTE revoked from
   `anon`); `correspondence_messages.search_tsv` generated tsvector + GIN index;
@@ -403,6 +418,31 @@ release; if this header disagrees with it, the header is wrong.
 ---
 
 ## Changelog
+
+### v0.33.2 — Parking permits print their unit number (18 Sep 2026)
+
+`src/ResidentPortal.jsx` only, plus migration 0018. Production build verified green
+(1917 modules, vite 5.4.21). Found while tracing the full parking-permit journey end to end
+for the Curve BCC demo: demo mode stubs the permit PDF, so the blank unit line had never
+been visible — it only shows in production, on the printed permit.
+
+- **Root cause.** `issue_parking_permit()` read the unit from the `units` register, not from
+  the application. `resolve_application_unit()` (BEFORE INSERT) only populates `unit_id` when
+  `details.unit` is non-empty, and `details.unit = user.unit || ""` always resolved to `""`
+  because nothing links an auth user to a `unit_people` row (0 of 125 rows carry `user_id`).
+  So `unit_id` stayed null, the register lookup returned null, and the permit printed blank.
+- **Decision: resolve, don't validate.** Validating the typed unit against the register was
+  considered and rejected — 10 of 12 prod buildings have no register at all, so validation
+  would reject legitimate residents outright. The register match is now a bonus that sets
+  `unit_id` when it happens to succeed, and never blocks issue.
+- **Frontend.** `f.unit` added to both form-state objects, required on submit with its own
+  flash message, sent via `details.unit` for `parking_permit` only (every other category
+  keeps the existing `user.unit` behaviour), and a full-width Unit field above the vehicle
+  grid.
+- **Not changed.** The `permit_issued` notification still stores `ref_id` as the permit
+  number string rather than the row UUID, so tap-to-open on that one alert cannot resolve;
+  and `openPermitPdf` calls `window.open` after an await, which popup blockers (iOS Safari
+  especially) can swallow. Both logged, neither fixed here.
 
 ### v0.33.1 — Back where you can reach it, and a usable party list (18 Sep 2026)
 
