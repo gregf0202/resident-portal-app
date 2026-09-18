@@ -5,11 +5,14 @@ horizon. Written for people, not developers — one line per feature, no jargon.
 
 **Last updated: 18 September 2026** · Maintained at every stage of development.
 
-> _**The master copy lives in the NaloHub Claude Project, at the root as `FEATURE_REGISTER.md`**
-> — alongside `ARCHITECTURE.md` — so every new chat starts with the current feature story.
-> The app repo keeps a mirror at `claude/FEATURE_REGISTER.md`; **edit the project copy, then
-> copy it to the repo**, never the other way round. Whenever a feature is built, planned or
-> deferred — in any conversation — an updated copy is issued to replace it, without being asked._
+> _**The working master is `claude/FEATURE_REGISTER.md` in the app repo** — alongside
+> `ARCHITECTURE.md`. Edit it there, commit it with the change, and in the same session push it
+> to Claude Project knowledge at the same path (`claude/FEATURE_REGISTER.md`), because Project
+> knowledge is what a new chat reads first and a stale copy there is trusted as if it were
+> current. The Google Drive copy follows automatically via the repo's `claude/` folder sync.
+> Whenever a feature is built, planned or deferred — in any conversation — this file is updated
+> and pushed to all three, without being asked. See "Where these docs live, and the sync rule"
+> in `ARCHITECTURE.md` §10 for the mechanics._
 
 *(A dash of housekeeping: dates are shown where the record is certain; the foundation era
 is listed in build order without invented dates.)*

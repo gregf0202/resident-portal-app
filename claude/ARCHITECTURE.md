@@ -191,8 +191,7 @@ Finder; the paths in this file are what he needs to put each file in the right f
 
 - Project **NaloHub (prod):** ref `lipwcsihcxndwwgzhiia`, region `ap-southeast-2`.
 - Migrations applied to prod live in `supabase/migrations/`.
-- **Parking permit unit number (migration 0018, WRITTEN 18 Sep 2026 — apply after the
-  frontend ships).** `issue_parking_permit()` previously derived `unit_number` FROM the
+- **Parking permit unit number (migration 0018, APPLIED to prod 18 Sep 2026).** `issue_parking_permit()` previously derived `unit_number` FROM the
   `units` register via `applications.unit_id`; where that is null the permit issued with
   `unit_number NULL` and `permit-pdf` printed `UNIT#` followed by nothing. Not an edge case:
   only 2 of 12 prod buildings have `units` rows, and **no `unit_people` row carries a
@@ -206,6 +205,13 @@ Finder; the paths in this file are what he needs to put each file in the right f
   Unit field on the permit form, without which the DB fix cannot stop a blank arriving.
 - **PP-0001/PP-0002 (SeaHaven, expired 20 Jul) remain blank** — no unit was ever captured,
   so there is nothing to backfill from. Left in place deliberately.
+- **Verified end-to-end on prod after applying**, in the exact failure case: an application
+  carrying `details.unit = '42B'` approved in a building with **zero `units` rows** issued
+  `PP-0001` with `unit_number = '42B'` and `unit_id` null — printing correctly without a
+  register, and without the missing register blocking issue. Run inside a `DO` block that
+  raised at the end to roll the whole thing back; the result was carried out in the error
+  message. Confirmed afterwards: 0 test rows, permits still 2, applications still 6.
+  Security advisors identical to the pre-change baseline.
 - **Correspondence filing + search (migrations 0015, 0016, APPLIED to prod 18 Sep 2026).**
   `corr_file_unfiled_new_thread` (SECURITY DEFINER, committee-guarded, EXECUTE revoked from
   `anon`); `correspondence_messages.search_tsv` generated tsvector + GIN index;
@@ -331,6 +337,47 @@ this file in the same commit.** At the start of each work session, read this fir
 context carries across sessions instead of being re-derived each time. The version line
 (`PLATFORM` in `src/ResidentPortal.jsx`) is the single source of truth for the current
 release; if this header disagrees with it, the header is wrong.
+
+### Where these docs live, and the sync rule
+
+`ARCHITECTURE.md` and `FEATURE_REGISTER.md` exist in three places. The repo is the working
+master; the other two are mirrors that go stale silently and are read by future sessions as
+if they were current.
+
+| Copy | Path | How it updates |
+| --- | --- | --- |
+| **Working master** | `claude/` in this repo | edited directly, committed with the change |
+| Google Drive | folder `1Q3FWFVHznlmXamZBuYRw8dfyYjaZprBq` | the repo `claude/` folder syncs there automatically |
+| Claude Project knowledge | `claude/ARCHITECTURE.md`, `claude/FEATURE_REGISTER.md` | **manual — `Projects.project_write` with `local_path`** |
+
+**The rule: any commit that touches either doc must also push it to Project knowledge in the
+same session.** Not next time, not when someone notices.
+
+Two things make this non-optional rather than tidy-minded:
+
+- Project knowledge is what a *new* chat reads first. A stale copy there is worse than no
+  copy, because it is trusted. On 18 Sep 2026 a session built four code edits against the
+  Project copy of `ResidentPortal.jsx` at **v0.27.0** while live was **v0.33.1** — six
+  versions and five weeks adrift. The anchors happened to still match; that was luck.
+- Project knowledge allows **duplicate docs at the same path**. Three `ARCHITECTURE.md` and
+  three `FEATURE_REGISTER.md` had accumulated by 18 Sep. `project_write` replaces only the
+  newest, so stale siblings survive underneath and can be served to a future session.
+  Collapsed to one of each on 18 Sep 2026.
+
+Mechanics worth knowing, all learned the hard way:
+
+- `project_write` with a **bare filename** lands in the `claude/` namespace, which is why the
+  Project paths above match the repo paths. Use that; do not fight it.
+- `project_delete` removes **one** doc per call — the newest at that path. To collapse
+  duplicates, call it until the path is empty, then write once.
+- Use `local_path` rather than inline `content`, so a 77 KB file never enters context.
+- **`device_stage_files` can fail with a bogus "file is hardlinked" error for a few seconds
+  after `device_bash` writes that file.** It is a propagation lag, not a real hardlink —
+  `stat` reports `nlink=1` throughout. Wait and retry the same path rather than making copies;
+  copies fail the same way.
+
+`src/ResidentPortal.jsx` and `src/db.js` must **never** be kept in Project knowledge. They are
+large, they change most often, and a stale copy is actively dangerous — see above.
 
 ---
 
