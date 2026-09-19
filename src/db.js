@@ -1239,6 +1239,12 @@ export async function raiseFinding(bid, f) {
   };
   const { data, error } = await supabase.from("walkthrough_findings").insert(row).select("*").single();
   if (error) throw error;
+  // The 'raised' event is created by trigger; attach the evidence photo to it.
+  // photo_path and note are the only fields the append-only guard lets us set later.
+  if (f.photoPath) {
+    await supabase.from("walkthrough_finding_events")
+      .update({ photo_path: f.photoPath }).eq("finding_id", data.id).eq("event", "raised");
+  }
   audit(bid, "walkthrough.finding_raised", data.ref, { class: f.cls });
   return data;
 }
@@ -1250,12 +1256,13 @@ export async function updateFinding(bid, id, patch) {
 }
 
 // Committee only. The database refuses this for anyone else and says so.
-export async function closeFinding(bid, id, walkId, note) {
+export async function closeFinding(bid, id, walkId, note, photoPath) {
   const { error } = await supabase.from("walkthrough_findings")
     .update({ status: "closed", closed_walk_id: walkId || null }).eq("id", id);
   if (error) throw error;
   await supabase.from("walkthrough_finding_events")
-    .insert({ finding_id: id, walkthrough_id: walkId || null, event: "closed", note: note || null });
+    .insert({ finding_id: id, walkthrough_id: walkId || null, event: "closed",
+              note: note || null, photo_path: photoPath || null });
   audit(bid, "walkthrough.finding_closed", id);
 }
 
@@ -2197,11 +2204,11 @@ if (DEMO_MODE) {
       status: "open", first_raised_on: now().slice(0, 10), first_raised_walk_id: f.walkId || null,
       walks_open: 1, overdue: false, section_name: f.sectionName || null };
     DS.findings.unshift(row);
-    (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: row.id, walkthrough_id: f.walkId || null, event: "raised", note: f.observation, occurred_at: now() });
+    (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: row.id, walkthrough_id: f.walkId || null, event: "raised", note: f.observation, photo_path: f.photoPath || null, occurred_at: now() });
     return row;
   };
   updateFinding = async (_b, fid, patch) => { const f = (DS.findings || []).find((x) => x.id === fid); if (f) Object.assign(f, patch); };
-  closeFinding = async (_b, fid, wid) => { const f = (DS.findings || []).find((x) => x.id === fid); if (f) { f.status = "closed"; f.closed_walk_id = wid || null; f.closed_at = now(); } (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, walkthrough_id: wid || null, event: "closed", occurred_at: now() }); };
+  closeFinding = async (_b, fid, wid, note, photoPath) => { const f = (DS.findings || []).find((x) => x.id === fid); if (f) { f.status = "closed"; f.closed_walk_id = wid || null; f.closed_at = now(); } (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, walkthrough_id: wid || null, event: "closed", note: note || null, photo_path: photoPath || null, occurred_at: now() }); };
   reopenFinding = async (_b, fid, wid) => { const f = (DS.findings || []).find((x) => x.id === fid); if (f) { f.status = "open"; f.closed_at = null; f.closed_walk_id = null; } (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, walkthrough_id: wid || null, event: "reopened", occurred_at: now() }); };
   observeFindingAgain = async (fid, wid, note, photoPath) => {
     const f = (DS.findings || []).find((x) => x.id === fid); if (f) f.walks_open = (f.walks_open || 1) + 1;

@@ -8,6 +8,11 @@ import { loadBillingSummary } from "../db.js";
 import { loadAllBuildings, createBuilding, joinAsAdmin, listMembers, addMember, addMembersBulk, updateMember, removeMember, sendInvite, sendInvites, loadBillingStatuses, setBuildingReference } from "../db.js";
 import { parseCSV, toCSV, downloadCSV, readFileText } from "../csv.js";
 
+// vite.config.js already defines this from PLATFORM.version in ResidentPortal.jsx,
+// so the console shows the same number as the app without importing that module.
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+const BUILD_STAMP = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev";
+
 const ROLES = [["bcc", "Committee"], ["admin", "Administrator"], ["manager", "Building manager"], ["strata", "Strata manager"], ["owner", "Owner"], ["tenant", "Tenant"]];
 
 const AU_STATES = ["QLD", "NSW", "VIC", "SA", "WA", "TAS", "NT", "ACT"];
@@ -227,6 +232,15 @@ export default function PlatformConsole({ authUser, profileName, onOpen, onSignO
               );
             });
           })()}
+
+        <div style={{ marginTop: 28, paddingTop: 14, borderTop: `1px solid ${T.border}`,
+                      display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
+                      color: T.textMuted, fontSize: 12 }}>
+          <span><b style={{ color: T.text }}>NaloHub</b> Platform Console</span>
+          <span style={{ opacity: 0.5 }}>·</span>
+          <span title={BUILD_STAMP}>v{APP_VERSION}</span>
+          <span style={{ marginLeft: "auto", opacity: 0.8 }}>Be in the Nalo.</span>
+        </div>
       </div>
     </div>
   );
