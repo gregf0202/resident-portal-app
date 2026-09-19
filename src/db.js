@@ -1191,6 +1191,107 @@ export async function completeWalk(bid, walkId, summary) {
   audit(bid, "walkthrough.completed", walkId);
 }
 
+// ---- walk-through register (migrations 0021-0023) ---------------------------
+// The checklist answers a question on one walk; a FINDING is the thing that is
+// wrong, and it persists across walks until it is closed and verified. Closure
+// is the committee's act, enforced by walkthrough_findings_guard in the database.
+
+export async function listWalkSections(bid) {
+  const { data, error } = await supabase.from("walkthrough_sections")
+    .select("*").eq("building_id", bid).eq("active", true).order("sort");
+  if (error) throw error;
+  return data || [];
+}
+
+export async function listFindings(bid) {
+  const { data, error } = await supabase.from("walkthrough_findings_expanded")
+    .select("*").eq("building_id", bid).order("ref");
+  if (error) throw error;
+  return data || [];
+}
+
+export async function listFindingEvents(bid) {
+  const { data, error } = await supabase.from("walkthrough_finding_events")
+    .select("*, walkthrough_findings!inner(building_id, ref)")
+    .eq("walkthrough_findings.building_id", bid)
+    .order("occurred_at");
+  if (error) throw error;
+  return data || [];
+}
+
+// ref is assigned by the database trigger; never pass one from the client.
+export async function raiseFinding(bid, f) {
+  const row = {
+    building_id: bid,
+    class: f.cls,
+    section_id: f.sectionId || null,
+    item_id: f.itemId || null,
+    location: f.location || null,
+    observation: f.observation,
+    standard_snapshot: f.standard || null,
+    standard_is_general: !!f.general,
+    required_outcome: f.outcome || null,
+    owner: f.owner || null,
+    due_date: f.due || null,
+    frequency: f.frequency || null,
+    risk_rating: f.cls === "H" ? (f.risk || "medium") : null,
+    first_raised_walk_id: f.walkId || null,
+  };
+  const { data, error } = await supabase.from("walkthrough_findings").insert(row).select("*").single();
+  if (error) throw error;
+  audit(bid, "walkthrough.finding_raised", data.ref, { class: f.cls });
+  return data;
+}
+
+export async function updateFinding(bid, id, patch) {
+  const { error } = await supabase.from("walkthrough_findings").update(patch).eq("id", id);
+  if (error) throw error;
+  audit(bid, "walkthrough.finding_updated", id);
+}
+
+// Committee only. The database refuses this for anyone else and says so.
+export async function closeFinding(bid, id, walkId, note) {
+  const { error } = await supabase.from("walkthrough_findings")
+    .update({ status: "closed", closed_walk_id: walkId || null }).eq("id", id);
+  if (error) throw error;
+  await supabase.from("walkthrough_finding_events")
+    .insert({ finding_id: id, walkthrough_id: walkId || null, event: "closed", note: note || null });
+  audit(bid, "walkthrough.finding_closed", id);
+}
+
+export async function reopenFinding(bid, id, walkId, note) {
+  const { error } = await supabase.from("walkthrough_findings")
+    .update({ status: "open" }).eq("id", id);
+  if (error) throw error;
+  await supabase.from("walkthrough_finding_events")
+    .insert({ finding_id: id, walkthrough_id: walkId || null, event: "reopened", note: note || null });
+  audit(bid, "walkthrough.finding_reopened", id);
+}
+
+// Still present at this walk. This is what makes walks_open, and the recurrence
+// schedule, count for anything.
+export async function observeFindingAgain(findingId, walkId, note, photoPath) {
+  const { error } = await supabase.from("walkthrough_finding_events")
+    .insert({ finding_id: findingId, walkthrough_id: walkId || null, event: "observed_again",
+              note: note || null, photo_path: photoPath || null });
+  if (error) throw error;
+}
+
+export async function setWalkMeta(walkId, patch) {
+  const { error } = await supabase.from("walkthroughs").update(patch).eq("id", walkId);
+  if (error) throw error;
+}
+
+// Issuing fixes the walk as a point in time. Findings keep moving afterwards;
+// the issued walk does not.
+export async function issueWalk(bid, walkId, summary) {
+  const { error } = await supabase.from("walkthroughs")
+    .update({ status: "completed", summary: summary || null, issued_at: new Date().toISOString() })
+    .eq("id", walkId);
+  if (error) throw error;
+  audit(bid, "walkthrough.issued", walkId);
+}
+
 // ---- in-app alerts ----------------------------------------------------------
 export async function listNotifications(bid) {
   const { data, error } = await supabase.from("app_notifications").select("*").eq("building_id", bid).order("created_at", { ascending: false }).limit(100);
@@ -2083,6 +2184,31 @@ if (DEMO_MODE) {
     if (ex) ex.maintenance_id = maintId; else arr.push({ id: id(), walkthrough_id: wid, item_id: iid, maintenance_id: maintId });
   };
   completeWalk = async (_b, wid, summary) => { const w = DS.walks.find((x) => x.id === wid); if (w) { w.status = "completed"; w.summary = summary; } };
+  listWalkSections = async () => [...(DS.walkSections || [])];
+  listFindings = async () => [...(DS.findings || [])];
+  listFindingEvents = async () => [...(DS.findingEvents || [])];
+  raiseFinding = async (_b, f) => {
+    DS.findings = DS.findings || [];
+    const n = DS.findings.length + 1;
+    const row = { id: id(), ref: "DEMO-" + String(n).padStart(4, "0"), class: f.cls, section_id: f.sectionId || null,
+      item_id: f.itemId || null, location: f.location || null, observation: f.observation,
+      standard_snapshot: f.standard || null, standard_is_general: !!f.general, required_outcome: f.outcome || null,
+      owner: f.owner || null, due_date: f.due || null, risk_rating: f.cls === "H" ? (f.risk || "medium") : null,
+      status: "open", first_raised_on: now().slice(0, 10), first_raised_walk_id: f.walkId || null,
+      walks_open: 1, overdue: false, section_name: f.sectionName || null };
+    DS.findings.unshift(row);
+    (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: row.id, walkthrough_id: f.walkId || null, event: "raised", note: f.observation, occurred_at: now() });
+    return row;
+  };
+  updateFinding = async (_b, fid, patch) => { const f = (DS.findings || []).find((x) => x.id === fid); if (f) Object.assign(f, patch); };
+  closeFinding = async (_b, fid, wid) => { const f = (DS.findings || []).find((x) => x.id === fid); if (f) { f.status = "closed"; f.closed_walk_id = wid || null; f.closed_at = now(); } (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, walkthrough_id: wid || null, event: "closed", occurred_at: now() }); };
+  reopenFinding = async (_b, fid, wid) => { const f = (DS.findings || []).find((x) => x.id === fid); if (f) { f.status = "open"; f.closed_at = null; f.closed_walk_id = null; } (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, walkthrough_id: wid || null, event: "reopened", occurred_at: now() }); };
+  observeFindingAgain = async (fid, wid, note, photoPath) => {
+    const f = (DS.findings || []).find((x) => x.id === fid); if (f) f.walks_open = (f.walks_open || 1) + 1;
+    (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, walkthrough_id: wid || null, event: "observed_again", note: note || null, photo_path: photoPath || null, occurred_at: now() });
+  };
+  setWalkMeta = async (wid, patch) => { const w = DS.walks.find((x) => x.id === wid); if (w) Object.assign(w, patch); };
+  issueWalk = async (_b, wid, summary) => { const w = DS.walks.find((x) => x.id === wid); if (w) { w.status = "completed"; w.summary = summary; w.issued_at = now(); } };
   listNotifications = async () => [...DS.notifications];
   markNotificationRead = async (nid) => { const n = DS.notifications.find((x) => x.id === nid); if (n) n.read_at = now(); };
   markAllNotificationsRead = async () => { DS.notifications.forEach((n) => { if (!n.read_at) n.read_at = now(); }); };
