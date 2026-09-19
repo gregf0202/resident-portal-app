@@ -491,7 +491,8 @@ export async function addAccessItem(bid, unitId, row) {
 // key against a lot, not a person.
 export async function listAccessItems(bid) {
   const { data: items, error } = await supabase.from("unit_access_items")
-    .select("*").eq("building_id", bid);
+    .select("*, access_descriptors(id, name, item_type, purpose, sort, stock_tracked)")
+    .eq("building_id", bid);
   if (error) throw error;
   if (!items || !items.length) return [];
 
@@ -525,7 +526,137 @@ export async function listAccessItems(bid) {
     ...a,
     unit_number: unitNo[a.unit_id] || "",
     occupants: occ[a.unit_id] || [],
+    descriptor: a.access_descriptors ? a.access_descriptors.name : "",
+    descriptor_sort: a.access_descriptors ? a.access_descriptors.sort : 9999,
   }));
+}
+
+// ---- access descriptors: the building's own key/fob catalogue ---------------
+// Per building, not a fixed list, because the list IS building-specific: Curve
+// Birtinya names seven fire-stair levels, the next building has twelve or two
+// towers. Each descriptor carries its classification so filters and any
+// cross-building reporting still work. See migration 0019.
+export async function listAccessDescriptors(bid) {
+  const { data, error } = await supabase.from("access_descriptors")
+    .select("*").eq("building_id", bid).order("sort").order("name");
+  if (error) throw error;
+  return data || [];
+}
+export async function saveAccessDescriptor(bid, d) {
+  const row = {
+    building_id: bid, name: String(d.name || "").trim(),
+    item_type: d.item_type || "key", purpose: d.purpose || "resident",
+    stock_tracked: !!d.stock_tracked, sort: Number(d.sort) || 0,
+    active: d.active === undefined ? true : !!d.active,
+  };
+  const { error } = d.id
+    ? await supabase.from("access_descriptors").update(row).eq("id", d.id)
+    : await supabase.from("access_descriptors").insert(row);
+  if (error) throw error;
+  audit(bid, d.id ? "access.descriptor_updated" : "access.descriptor_added", row.name);
+}
+// Deactivate rather than delete: descriptor_id on an item is ON DELETE SET NULL,
+// so a hard delete would silently unclassify every device that used it.
+export async function setAccessDescriptorActive(bid, id, active) {
+  const { error } = await supabase.from("access_descriptors").update({ active: !!active }).eq("id", id);
+  if (error) throw error;
+  audit(bid, active ? "access.descriptor_reactivated" : "access.descriptor_retired", id);
+}
+
+// ---- entitlements: what a unit is entitled to hold, per descriptor ----------
+export async function listAccessEntitlements(bid) {
+  const { data, error } = await supabase.from("unit_access_entitlements")
+    .select("*").eq("building_id", bid);
+  if (error) throw error;
+  return data || [];
+}
+export async function setAccessEntitlement(bid, unitId, descriptorId, entitlement) {
+  const n = Math.max(0, Number(entitlement) || 0);
+  const { error } = await supabase.from("unit_access_entitlements")
+    .upsert({ building_id: bid, unit_id: unitId, descriptor_id: descriptorId, entitlement: n, updated_at: new Date().toISOString() },
+            { onConflict: "unit_id,descriptor_id" });
+  if (error) throw error;
+}
+// Bulk load from the BCC's own sheet: [{ unit, descriptor, entitlement }].
+// Returns what matched and what did not, because a silent skip on a 56-unit
+// import is how a register quietly goes wrong.
+export async function bulkSetAccessEntitlements(bid, rows) {
+  const [units, descs] = await Promise.all([listUnits(bid), listAccessDescriptors(bid)]);
+  const uBy = {}; units.forEach((u) => { uBy[String(u.unit_number).trim().toLowerCase()] = u.id; });
+  const dBy = {}; descs.forEach((d) => { dBy[String(d.name).trim().toLowerCase()] = d.id; });
+  const payload = []; const skipped = [];
+  (rows || []).forEach((r) => {
+    const uid = uBy[String(r.unit || "").trim().toLowerCase()];
+    const did = dBy[String(r.descriptor || "").trim().toLowerCase()];
+    if (!uid) { skipped.push(`unit "${r.unit}" not found`); return; }
+    if (!did) { skipped.push(`descriptor "${r.descriptor}" not found`); return; }
+    payload.push({ building_id: bid, unit_id: uid, descriptor_id: did,
+      entitlement: Math.max(0, Number(r.entitlement) || 0), updated_at: new Date().toISOString() });
+  });
+  if (payload.length) {
+    const { error } = await supabase.from("unit_access_entitlements")
+      .upsert(payload, { onConflict: "unit_id,descriptor_id" });
+    if (error) throw error;
+    audit(bid, "access.entitlements_bulk_set", payload.length + " rows");
+  }
+  return { set: payload.length, skipped };
+}
+
+// Classify existing devices in bulk: [{ identifier, descriptor }]. The 230 rows
+// imported from the BM register in Aug 2026 all arrived as one undifferentiated
+// "Key or fob", and entitlement vs issued means nothing until they are sorted.
+export async function bulkClassifyAccessItems(bid, rows) {
+  const descs = await listAccessDescriptors(bid);
+  const dBy = {}; descs.forEach((d) => { dBy[String(d.name).trim().toLowerCase()] = d.id; });
+  let done = 0; const skipped = [];
+  for (const r of rows || []) {
+    const ident = String(r.identifier || "").trim();
+    const did = dBy[String(r.descriptor || "").trim().toLowerCase()];
+    if (!ident) { skipped.push("row with no key number"); continue; }
+    if (!did) { skipped.push(`descriptor "${r.descriptor}" not found`); continue; }
+    const patch = { descriptor_id: did };
+    if (r.status) patch.status = r.status;
+    const { error, count } = await supabase.from("unit_access_items")
+      .update(patch, { count: "exact" }).eq("building_id", bid).eq("identifier", ident);
+    if (error) { skipped.push(`${ident}: ${error.message}`); continue; }
+    if (!count) { skipped.push(`key number "${ident}" not in the register`); continue; }
+    done += count;
+  }
+  if (done) audit(bid, "access.items_classified", done + " devices");
+  return { classified: done, skipped };
+}
+
+// ---- the Caretaker's annual audit ------------------------------------------
+export async function runAccessAudit(bid) {
+  const { data, error } = await supabase.rpc("access_audit", { p_building: bid });
+  if (error) throw error;
+  return data || [];
+}
+
+// ---- signed receipts --------------------------------------------------------
+// Every key, fob and remote is signed for; the signed copy lives in the private
+// attachments bucket and is linked to the device it belongs to.
+export async function uploadAccessReceipt(bid, itemId, file) {
+  const up = await uploadAttachment(bid, "key-receipts", file);
+  const { error } = await supabase.from("unit_access_items")
+    .update({ receipt_path: up.path, receipt_uploaded_at: new Date().toISOString() })
+    .eq("id", itemId);
+  if (error) throw error;
+  audit(bid, "access.receipt_uploaded", up.name);
+  return up;
+}
+export async function accessReceiptUrl(path) {
+  return attachmentUrl(path);
+}
+
+// Lost or withdrawn devices are SUSPENDED, never deleted, and stay recorded
+// against the unit or against stock. The BCC was explicit about that.
+export async function suspendAccessItem(bid, id, reason) {
+  const { error } = await supabase.from("unit_access_items")
+    .update({ status: "suspended", suspended_at: new Date().toISOString(), suspended_reason: reason || null })
+    .eq("id", id);
+  if (error) throw error;
+  audit(bid, "access.item_suspended", reason || id);
 }
 export async function updateAccessItemStatus(id, status) {
   const patch = { status };
@@ -1640,9 +1771,121 @@ if (DEMO_MODE) {
   addUnitVehicle = async (_b, unitId, row) => { DS.vehicles.push({ id: id(), unit_id: unitId, ...row }); };
   addAccessItem = async (_b, unitId, row) => { DS.access.push({ id: id(), unit_id: unitId, ...row }); };
   updateAccessItemStatus = async (iid, status) => { const x = DS.access.find((a) => a.id === iid); if (x) x.status = status; };
+  // A demo catalogue in the same shape as a real building's, small enough to
+  // read at a glance but including a master, a service key and two stock-tracked
+  // devices so the audit has something to reconcile.
+  DS.descriptors = [
+    { id: "d-master", building_id: "b-demo", name: "Building Key - Master", item_type: "key", purpose: "master", stock_tracked: false, sort: 10, active: true },
+    { id: "d-service", building_id: "b-demo", name: "Building Key - Service", item_type: "key", purpose: "service", stock_tracked: false, sort: 20, active: true },
+    { id: "d-stairs-g", building_id: "b-demo", name: "Building and Fire Stairs Key - Ground Floor", item_type: "key", purpose: "resident", stock_tracked: false, sort: 30, active: true },
+    { id: "d-stairs-1", building_id: "b-demo", name: "Building and Fire Stairs Key - Level 1", item_type: "key", purpose: "resident", stock_tracked: false, sort: 40, active: true },
+    { id: "d-fob", building_id: "b-demo", name: "Fob", item_type: "fob", purpose: "resident", stock_tracked: true, sort: 110, active: true },
+    { id: "d-remote", building_id: "b-demo", name: "Remote", item_type: "remote", purpose: "resident", stock_tracked: true, sort: 120, active: true },
+    { id: "d-unitdoor", building_id: "b-demo", name: "Unit door metal lock key", item_type: "key", purpose: "resident", stock_tracked: false, sort: 130, active: true },
+  ];
+  DS.entitlements = [
+    { id: "e1", building_id: "b-demo", unit_id: "unit-12", descriptor_id: "d-fob", entitlement: 2 },
+    { id: "e2", building_id: "b-demo", unit_id: "unit-12", descriptor_id: "d-remote", entitlement: 2 },
+    { id: "e3", building_id: "b-demo", unit_id: "unit-12", descriptor_id: "d-unitdoor", entitlement: 2 },
+    { id: "e4", building_id: "b-demo", unit_id: "unit-5", descriptor_id: "d-fob", entitlement: 1 },
+    { id: "e5", building_id: "b-demo", unit_id: "unit-5", descriptor_id: "d-remote", entitlement: 1 },
+  ];
+  // Give the seeded demo devices a descriptor so the audit is not all unclassified.
+  DS.access.forEach((a) => {
+    if (a.descriptor_id) return;
+    a.descriptor_id = a.item_type === "fob" ? "d-fob" : a.item_type === "remote" ? "d-remote"
+      : a.purpose === "master" ? "d-master" : a.purpose === "service" ? "d-service" : "d-unitdoor";
+  });
+
+  listAccessDescriptors = async () => [...DS.descriptors].filter((d) => d.active).sort((a, b) => a.sort - b.sort);
+  saveAccessDescriptor = async (_b, d) => {
+    if (d.id) { const x = DS.descriptors.find((y) => y.id === d.id); if (x) Object.assign(x, d); return; }
+    DS.descriptors.push({ id: id(), building_id: "b-demo", active: true, stock_tracked: !!d.stock_tracked,
+      sort: Number(d.sort) || 0, name: d.name, item_type: d.item_type || "key", purpose: d.purpose || "resident" });
+  };
+  setAccessDescriptorActive = async (_b, did, active) => { const x = DS.descriptors.find((y) => y.id === did); if (x) x.active = !!active; };
+  listAccessEntitlements = async () => [...DS.entitlements];
+  setAccessEntitlement = async (_b, unitId, descriptorId, ent) => {
+    const x = DS.entitlements.find((e) => e.unit_id === unitId && e.descriptor_id === descriptorId);
+    if (x) x.entitlement = Math.max(0, Number(ent) || 0);
+    else DS.entitlements.push({ id: id(), building_id: "b-demo", unit_id: unitId, descriptor_id: descriptorId, entitlement: Math.max(0, Number(ent) || 0) });
+  };
+  bulkSetAccessEntitlements = async (_b, rows) => {
+    let set = 0; const skipped = [];
+    (rows || []).forEach((r) => {
+      const u = DS.units.find((x) => String(x.unit_number).toLowerCase() === String(r.unit || "").trim().toLowerCase());
+      const d = DS.descriptors.find((x) => x.name.toLowerCase() === String(r.descriptor || "").trim().toLowerCase());
+      if (!u) { skipped.push(`unit "${r.unit}" not found`); return; }
+      if (!d) { skipped.push(`descriptor "${r.descriptor}" not found`); return; }
+      setAccessEntitlement(null, u.id, d.id, r.entitlement); set++;
+    });
+    return { set, skipped };
+  };
+  bulkClassifyAccessItems = async (_b, rows) => {
+    let classified = 0; const skipped = [];
+    (rows || []).forEach((r) => {
+      const d = DS.descriptors.find((x) => x.name.toLowerCase() === String(r.descriptor || "").trim().toLowerCase());
+      if (!d) { skipped.push(`descriptor "${r.descriptor}" not found`); return; }
+      const hit = DS.access.filter((a) => String(a.identifier || "").trim() === String(r.identifier || "").trim());
+      if (!hit.length) { skipped.push(`key number "${r.identifier}" not in the register`); return; }
+      hit.forEach((a) => { a.descriptor_id = d.id; if (r.status) a.status = r.status; classified++; });
+    });
+    return { classified, skipped };
+  };
+  runAccessAudit = async () => {
+    const out = [];
+    const nm = (did) => DS.descriptors.find((d) => d.id === did) || {};
+    const cnt = (arr, st) => arr.filter((a) => (st === "suspended" ? (a.status === "suspended" || a.status === "lost") : a.status === st)).length;
+    // unit x descriptor pairs that have an entitlement or a device
+    DS.units.forEach((u) => DS.descriptors.forEach((d) => {
+      const ent = (DS.entitlements.find((e) => e.unit_id === u.id && e.descriptor_id === d.id) || {}).entitlement || 0;
+      const items = DS.access.filter((a) => a.unit_id === u.id && a.descriptor_id === d.id);
+      if (!ent && !items.length) return;
+      const issued = cnt(items, "issued"), on_hand = cnt(items, "on_hand");
+      out.push({ scope: "unit", unit_id: u.id, unit_number: u.unit_number, descriptor_id: d.id, descriptor: d.name,
+        item_type: d.item_type, purpose: d.purpose, stock_tracked: d.stock_tracked, sort: d.sort,
+        entitlement: ent, issued, on_hand, suspended: cnt(items, "suspended"), returned: cnt(items, "returned"),
+        held: issued + on_hand, variance: issued + on_hand - ent });
+    }));
+    DS.descriptors.forEach((d) => {
+      const items = DS.access.filter((a) => !a.unit_id && a.descriptor_id === d.id);
+      if (!d.stock_tracked && !items.length) return;
+      const issued = cnt(items, "issued"), on_hand = cnt(items, "on_hand");
+      out.push({ scope: "stock", unit_id: null, unit_number: null, descriptor_id: d.id, descriptor: d.name,
+        item_type: d.item_type, purpose: d.purpose, stock_tracked: d.stock_tracked, sort: d.sort,
+        entitlement: 0, issued, on_hand, suspended: cnt(items, "suspended"), returned: cnt(items, "returned"),
+        held: issued + on_hand, variance: 0 });
+    });
+    const uncl = DS.access.filter((a) => !a.descriptor_id);
+    const byUnit = {};
+    uncl.forEach((a) => { (byUnit[a.unit_id || ""] = byUnit[a.unit_id || ""] || []).push(a); });
+    Object.keys(byUnit).forEach((uid) => {
+      const items = byUnit[uid];
+      const u = DS.units.find((x) => x.id === uid);
+      const issued = cnt(items, "issued"), on_hand = cnt(items, "on_hand");
+      out.push({ scope: "unclassified", unit_id: uid || null, unit_number: u ? u.unit_number : null,
+        descriptor_id: null, descriptor: "Not yet classified", item_type: items[0].item_type, purpose: items[0].purpose,
+        stock_tracked: false, sort: 9999, entitlement: 0, issued, on_hand,
+        suspended: cnt(items, "suspended"), returned: cnt(items, "returned"), held: issued + on_hand, variance: 0 });
+    });
+    return out.sort((a, b) => (a.sort - b.sort) || String(a.unit_number || "").localeCompare(String(b.unit_number || "")));
+  };
+  uploadAccessReceipt = async (_b, itemId, file) => {
+    const path = "demo/receipt-" + id(); files[path] = URL.createObjectURL(file);
+    const x = DS.access.find((a) => a.id === itemId);
+    if (x) { x.receipt_path = path; x.receipt_uploaded_at = now(); }
+    return { name: file.name, path, kind: "document" };
+  };
+  accessReceiptUrl = async (path) => files[path] || "about:blank";
+  suspendAccessItem = async (_b, iid, reason) => {
+    const x = DS.access.find((a) => a.id === iid);
+    if (x) { x.status = "suspended"; x.suspended_at = now(); x.suspended_reason = reason || null; }
+  };
   listAccessItems = async () => DS.access.map((a) => {
     const u = DS.units.find((x) => x.id === a.unit_id);
+    const d = DS.descriptors.find((x) => x.id === a.descriptor_id);
     return { ...a, building_id: "b-demo", purpose: a.purpose || "resident",
+      descriptor: d ? d.name : "", descriptor_sort: d ? d.sort : 9999,
       unit_number: u ? u.unit_number : "",
       occupants: DS.people.filter((p) => p.unit_id === a.unit_id && p.is_current !== false).map((p) => p.full_name) };
   });

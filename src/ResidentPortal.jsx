@@ -16,6 +16,9 @@ import { Document as DocxDocument, Packer as DocxPacker, Paragraph as DocxP, Tex
 import GuidedTour from "./components/GuidedTour.jsx";
 import { audit, searchLegislation, loadDisputes, createDispute, appendDisputeEvent, setDisputeStatus, verifyDisputeChain, uploadAttachment, attachmentUrl,
   unitHealthCheck, listUnits, createUnit, addUnitPerson, addUnitPet, addUnitVehicle, addAccessItem, listAccessItems, updateAccessItemStatus, addUnitBreach,
+  listAccessDescriptors, saveAccessDescriptor, setAccessDescriptorActive,
+  listAccessEntitlements, setAccessEntitlement, bulkSetAccessEntitlements,
+  bulkClassifyAccessItems, runAccessAudit, uploadAccessReceipt, accessReceiptUrl, suspendAccessItem,
   listUnitsOverview, updateUnit, updateUnitPerson, moveOutUnitPerson, restoreUnitPerson, moveOutUnitPeopleOfType, deleteUnitPerson,
   updateUnitPet, deleteUnitPet, updateUnitVehicle, deleteUnitVehicle, updateAccessItem, deleteAccessItem, updateUnitBreach, deleteUnitBreach,
   listApplications, createApplication, decideApplication, withdrawApplication, listApplicationAttachments, uploadMedia, mediaUrl, addApplicationAttachment, listPermits, openPermitPdf,
@@ -36,7 +39,7 @@ import { supabase } from "./supabaseClient.js";
   + role gates -> tables + RLS scoped by building_id.
 */
 
-const PLATFORM = { name: "Resident Portal", version: "0.33.2" }; // 0.33.2: parking permits print their unit number. issue_parking_permit derived unit_number FROM the units register via applications.unit_id, so wherever the register has no matching row the permit issued with unit_number NULL and the permit-pdf edge function printed "UNIT#" followed by nothing. That is not an edge case: only 2 of 12 production buildings have any units rows, and no unit_people row carries a user_id, so the app cannot look a submitter unit up at all — details.unit arrived empty and both permits in production (PP-0001, PP-0002) are blank. A dash permit exists to tie a car to a lot, so it was the one field that could not be missing. Inverted in migration 0018: the unit number the submitter types is authoritative and is what prints; the register is consulted only best-effort, to set unit_id when the typed number happens to match (which links the permit into Unit Search) and as a fallback when nothing was typed. Deliberately no validation against the register — that would reject residents in the ten buildings which have none, and the committee already sees the unit on the approval card before approving. The permit form gains a required Unit field, because the database half alone cannot stop a blank arriving. // 0.33.1: Back is now a button in the BODY of every screen that has a back target, not only a chip on the header image that scrolls away, plus a Back to Correspondence at the foot of a thread, which is the longest screen in the app. Party list gained Resident tenant and Building manager (both were being filed as Other, which is why all 8 contacts sat there), Agent became Managing agent at the database level too, and the list is ordered by how often a committee deals with each party rather than by the enum sort order. Migration 0017. // 0.33.0: Correspondence can file and be searched. An inbound email could only be filed onto an EXISTING thread, and the only way to make a thread was to send an email, so the first inbound email for any building was unfilable: Curve had 0 threads and 7 unfiled items with a permanently disabled File button. New corr_file_unfiled_new_thread RPC (migration 0015) starts a thread from the email itself, matching or creating the contact from the sender and sending nothing. One search box now covers thread subject, party name, email and organisation, and the words inside every message body, via a generated tsvector (0015) with guillemet highlighting (0016) so no email HTML ever reaches innerHTML. Unfiled tray gained a filter and the dead File button now explains itself. Announcements send from the building own address instead of no-reply@, and the receiver ignores our own domain and prefers a real mailbox slug, which is what produced 6 unroutable orphan rows. // 0.32.1: Key & Fob Register counters follow the search. The tiles and status chips were computed from the whole register, so searching a name correctly narrowed the list while every number beside it still read the building total, which is indistinguishable from a broken search box. Filtering is now split into base (search + Type + Purpose) and shown (base + status chip), both counts read from base, a result line states "N of M devices matching X" with a Clear action, and the whole-register no-holder notice hides while filtering. Occupant names de-duplicated: one person can hold two unit_people rows for a lot. // 0.32.0: Key & Fob Register reads unit_access_items (the table Unit Search uses) instead of the legacy store.keyfobs, so bulk-imported access data finally appears: Curve Birtinya held 230 imported keys the register could not see. One search box covers unit number, resident name and key number; status chips plus Type and Purpose filters. New Purpose axis (Resident / Master / Service / Other, migration 0013) sits alongside Type rather than replacing it, so a master fob is still a fob. unit_id is now nullable (migration 0014), giving building-level masters, service keys and lock boxes a home instead of being skipped. Devices with no recorded holder say so rather than borrowing an occupant name. CSV download, template and upload; legacy keyfobs rows merged read-only and badged. // 0.31.3: Add to Home Screen instructions describe what the person sees, not an iOS version. iOS 26 Compact layout (the default on a fresh install) hides Safari's Share button behind a "..." menu beside the address bar, so "tap Share" stranded a Curve committee chair. AddToHomeScreen.jsx (src/components) now shows both routes: Share icon, or "..." then Share; the Getting Started tour step says the same. const PLATFORM = { name: "Resident Portal", version: "0.31.2" }; // 0.31.2: the update banner shipped in 0.30.0 has never run in production. UpdateBanner was defined in ResidentPortal.jsx but neither exported nor rendered anywhere except the DEMO root (the default export App(), which the demo build uses). Production runs App.jsx, which renders BuildingApp/Toast/AddToHomeScreen and never mounted it, so the whole point of 0.30.0 (stop people being stranded on old builds) applied only to demo.nalohub.com. Caught when an iPhone home-screen install sat on 0.30.0 with no prompt while laptop and Android had picked up 0.31.1. Fix is two lines: export the component, mount it in App.jsx. The demo root keeps its own instance, so neither app renders it twice. const PLATFORM = { name: "Resident Portal", version: "0.31.1" }; // 0.31.1: the printable guide header drew the wordmark twice. `.head` is a flex row of the hosted logo (https://nalohub.com/NaloHub-Logo.png) followed by a bold text lockup "NalOHub", but the logo IS the wordmark, so all twenty printable cheat sheets carried the name beside itself. The text div is kept purely as a fallback: hidden by default, revealed by the img onerror handler, so a 404 on the hosted file still prints branded rather than blank. Adds alt text too. Separately and with no code involved, the hosted PNG was replaced with a transparent, alpha-trimmed version; the old file had an opaque light-grey panel that printed as a grey rectangle behind the mark on white paper. const PLATFORM = { name: "Resident Portal", version: "0.31.0" }; // 0.31.0: first sign-in is the adoption gate, so it now has two doors. The sign-in email carries a numeric code alongside the link, and the waiting screen accepts it: the code is device-agnostic, so it survives the three things that quietly break a link and look identical to the person (email opened on the laptop while the phone stays locked out; a corporate mail scanner opening the link and burning it before they tap; the link opening inside the mail app's own browser, where Add to Home Screen is not offered). Code length is NOT hardcoded — GoTrue's OTP length is a project setting, so the field accepts 6 to 10 digits and lets Supabase judge. The waiting screen also names the sender and points at Junk and Outlook's Other tab, and the 60-second resend gap is explained as a pause rather than shown as a raw error. Prompted by a Curve committee member who could reach NaloHub on her laptop but not her phone. Also in this build: usage analytics Layer 1 — logActivity() in db.js, fired from a useEffect in App.jsx on building open, writing one row per person, per building, per Brisbane day to activity_events, with a coarse mobile/desktop hint; the DB half shipped 3 September. const PLATFORM = { name: "Resident Portal", version: "0.30.0" }; // 0.30.0: people were being stranded on old builds. There is no service worker, so any page load fetches the newest code — but nothing makes people load the page, and the home-screen app on iOS has no address bar and no pull-to-refresh, so a phone left open can sit on an old build indefinitely. The build now stamps /version.json (vite.config.js reads PLATFORM.version, so this line stays the single source of truth) and the running app compares it on launch, on focus, on resume from background, and every 15 minutes. When they differ a quiet banner offers Refresh. It never reloads on its own — someone may be mid-way through a maintenance report — and it stays silent when offline or when version.json is missing. netlify.toml gains no-store on version.json and immutable caching on the content-hashed /assets/*, which also makes repeat loads cheaper on mobile data. const PLATFORM = { name: "Resident Portal", version: "0.29.2" }; // 0.29.2 (audit pass): Unit Search "+ Dispute" used createDispute, which has no demo shim, so it failed on demo — it now uses the same store path as the Disputes view and demo disputes show against their unit. Documents: the per-row "Release" button was nested inside the whole-row button (invalid HTML, swallowed clicks); the row is now a keyboard-accessible div. Three handlers failed silently: Messaging with no subject, Bookings with no date, Documents with no file/category — all now say what is missing, and Messaging also rejects an empty body instead of sending it. const PLATFORM = { name: "Resident Portal", version: "0.29.1" }; // 0.29.1: Unit Search opens on a browsable list of every unit — owner and tenant names, pet/vehicle/key counts, agent and notes markers — instead of a bare row of numbers, and the search box filters it by unit number OR resident name as you type. Searching a name that lands on one unit opens it. Fixes a real gap: the unit list was behind an `if (backend)` guard, so on the demo (no Supabase) it never loaded at all and the screen was an empty search box with nothing to discover. New listUnitsOverview() in db.js (5 queries, demo-shimmed). // 0.29.0 combines two streams built in parallel. (a) Versioned Conditions of Approval: inline add/remove replaced by Amend (any BCC member, reason required); each amendment snapshots the prior conditions and every vote cast against them into motion.details.history, bumps motions.version, sets live votes aside and re-alerts the BCC; amendment history with strike-through diff; tally labelled with the version it counts. (b) Unit registry: edit + remove on every person, pet, vehicle, key and breach; unit-level edit (lot, spaces, notes); owners/tenants archived via Moved out (is_current + move_out) and restorable under "Previously at this unit"; "replacing the current owner/tenant" archives the incumbent; new Unit notes card; App account badges matched on email (green) or same-unit name (amber); "App members not on the register" with one-tap add; Other contacts section for emergency contacts and property managers. Plus: disputes now link to units in both directions (Log from Unit Search, unit picker in Disputes) — unit_id was never written before, so the Disputes section could never populate; Managing agent card always offered rather than hidden until a tenant exists; per-building "Who maintains the unit register" toggle (Settings, committee-only) letting the BM maintain the register, off by default, enforced by can_edit_unit_registry() in the database. Migrations: unit_health_check rewrite, amend_motion_conditions + motions.version, can_edit_unit_registry + registry policies. // 0.27.0: "Set up by" provenance line on the committee dashboard and in Settings (who established the record, who funds it, committee-only Change with append-only novations; stamped at the final Getting Started gate); "Export everything" beside it, built on the existing building export, with a visible export log (who, when) on building.exports. Export no longer pulls document/gallery file payloads into the workbook (reads the *_meta views). // 0.26.0: Maintenance Report v2 — summary page first (five tiles incl. Approved this period, "waiting on your decision" panel with dates sent, waiting-on breakdown, oldest open item), detail grouped by what each item is waiting on, resolved items as a compact table with a period total; per-item "waiting on" field (Triage card); exactly one ACCEPTED quote per item; duplicate-title nudge on report. // 0.25.1: By-law sub-clauses get a proper hanging indent — wrapped lines align under their clause. // 0.25.0: By-laws sort numerically and keep their line breaks; NaloPilot sends buildingId so nalo-answer answers from the building's own by-laws. // 0.23.0: NaloHub Guides — 8 role-aware task walkthroughs (guide drawer with Show me highlighting + progress) and printable A4 cheat sheets rendered from the same GUIDES data. // 0.22.0: Minute-ready Maintenance Report (Word, date range) on Reports; historical maintenance entry (backdated Reported on / Resolved on, BM & committee only) on the Maintenance report form. // 0.20.0: Managing-agent CTA for leased units, multi-recipient announcements, scheme/plan reference in setup+settings, editable Dashboard label + dashboard reorder, motion document uploads, Fire Safety evacuation plan, maintenance-workflow progress bar + next-step, header actions moved into the body.
+const PLATFORM = { name: "Resident Portal", version: "0.34.0" }; // 0.34.0: Key & Fob Register becomes a register, an entitlement record and an audit. Descriptors are now per-building DATA (migration 0019) rather than a fixed list: the Curve BCC asked for thirteen, but eight differed only by fire-stair level and two were the Purpose axis welded into a string, so a fixed list would have made a new level a schema change and baked one building floor plan into every building. Each unit gets a static entitlement per descriptor; devices carry issued / on hand / suspended, who signed for them (owner, managing agent or tenant, with the owner authority a tenant issue requires) and the signed receipt file. Lost devices are suspended and never deleted. access_audit (0020) reconciles entitlement against issued and on hand per unit, plus building stock and anything not yet classified, and exports for the Caretaker. Four tabs: Register, Entitlements, Audit, Descriptors. // 0.33.2: parking permits print their unit number. issue_parking_permit derived unit_number FROM the units register via applications.unit_id, so wherever the register has no matching row the permit issued with unit_number NULL and the permit-pdf edge function printed "UNIT#" followed by nothing. That is not an edge case: only 2 of 12 production buildings have any units rows, and no unit_people row carries a user_id, so the app cannot look a submitter unit up at all — details.unit arrived empty and both permits in production (PP-0001, PP-0002) are blank. A dash permit exists to tie a car to a lot, so it was the one field that could not be missing. Inverted in migration 0018: the unit number the submitter types is authoritative and is what prints; the register is consulted only best-effort, to set unit_id when the typed number happens to match (which links the permit into Unit Search) and as a fallback when nothing was typed. Deliberately no validation against the register — that would reject residents in the ten buildings which have none, and the committee already sees the unit on the approval card before approving. The permit form gains a required Unit field, because the database half alone cannot stop a blank arriving. // 0.33.1: Back is now a button in the BODY of every screen that has a back target, not only a chip on the header image that scrolls away, plus a Back to Correspondence at the foot of a thread, which is the longest screen in the app. Party list gained Resident tenant and Building manager (both were being filed as Other, which is why all 8 contacts sat there), Agent became Managing agent at the database level too, and the list is ordered by how often a committee deals with each party rather than by the enum sort order. Migration 0017. // 0.33.0: Correspondence can file and be searched. An inbound email could only be filed onto an EXISTING thread, and the only way to make a thread was to send an email, so the first inbound email for any building was unfilable: Curve had 0 threads and 7 unfiled items with a permanently disabled File button. New corr_file_unfiled_new_thread RPC (migration 0015) starts a thread from the email itself, matching or creating the contact from the sender and sending nothing. One search box now covers thread subject, party name, email and organisation, and the words inside every message body, via a generated tsvector (0015) with guillemet highlighting (0016) so no email HTML ever reaches innerHTML. Unfiled tray gained a filter and the dead File button now explains itself. Announcements send from the building own address instead of no-reply@, and the receiver ignores our own domain and prefers a real mailbox slug, which is what produced 6 unroutable orphan rows. // 0.32.1: Key & Fob Register counters follow the search. The tiles and status chips were computed from the whole register, so searching a name correctly narrowed the list while every number beside it still read the building total, which is indistinguishable from a broken search box. Filtering is now split into base (search + Type + Purpose) and shown (base + status chip), both counts read from base, a result line states "N of M devices matching X" with a Clear action, and the whole-register no-holder notice hides while filtering. Occupant names de-duplicated: one person can hold two unit_people rows for a lot. // 0.32.0: Key & Fob Register reads unit_access_items (the table Unit Search uses) instead of the legacy store.keyfobs, so bulk-imported access data finally appears: Curve Birtinya held 230 imported keys the register could not see. One search box covers unit number, resident name and key number; status chips plus Type and Purpose filters. New Purpose axis (Resident / Master / Service / Other, migration 0013) sits alongside Type rather than replacing it, so a master fob is still a fob. unit_id is now nullable (migration 0014), giving building-level masters, service keys and lock boxes a home instead of being skipped. Devices with no recorded holder say so rather than borrowing an occupant name. CSV download, template and upload; legacy keyfobs rows merged read-only and badged. // 0.31.3: Add to Home Screen instructions describe what the person sees, not an iOS version. iOS 26 Compact layout (the default on a fresh install) hides Safari's Share button behind a "..." menu beside the address bar, so "tap Share" stranded a Curve committee chair. AddToHomeScreen.jsx (src/components) now shows both routes: Share icon, or "..." then Share; the Getting Started tour step says the same. const PLATFORM = { name: "Resident Portal", version: "0.31.2" }; // 0.31.2: the update banner shipped in 0.30.0 has never run in production. UpdateBanner was defined in ResidentPortal.jsx but neither exported nor rendered anywhere except the DEMO root (the default export App(), which the demo build uses). Production runs App.jsx, which renders BuildingApp/Toast/AddToHomeScreen and never mounted it, so the whole point of 0.30.0 (stop people being stranded on old builds) applied only to demo.nalohub.com. Caught when an iPhone home-screen install sat on 0.30.0 with no prompt while laptop and Android had picked up 0.31.1. Fix is two lines: export the component, mount it in App.jsx. The demo root keeps its own instance, so neither app renders it twice. const PLATFORM = { name: "Resident Portal", version: "0.31.1" }; // 0.31.1: the printable guide header drew the wordmark twice. `.head` is a flex row of the hosted logo (https://nalohub.com/NaloHub-Logo.png) followed by a bold text lockup "NalOHub", but the logo IS the wordmark, so all twenty printable cheat sheets carried the name beside itself. The text div is kept purely as a fallback: hidden by default, revealed by the img onerror handler, so a 404 on the hosted file still prints branded rather than blank. Adds alt text too. Separately and with no code involved, the hosted PNG was replaced with a transparent, alpha-trimmed version; the old file had an opaque light-grey panel that printed as a grey rectangle behind the mark on white paper. const PLATFORM = { name: "Resident Portal", version: "0.31.0" }; // 0.31.0: first sign-in is the adoption gate, so it now has two doors. The sign-in email carries a numeric code alongside the link, and the waiting screen accepts it: the code is device-agnostic, so it survives the three things that quietly break a link and look identical to the person (email opened on the laptop while the phone stays locked out; a corporate mail scanner opening the link and burning it before they tap; the link opening inside the mail app's own browser, where Add to Home Screen is not offered). Code length is NOT hardcoded — GoTrue's OTP length is a project setting, so the field accepts 6 to 10 digits and lets Supabase judge. The waiting screen also names the sender and points at Junk and Outlook's Other tab, and the 60-second resend gap is explained as a pause rather than shown as a raw error. Prompted by a Curve committee member who could reach NaloHub on her laptop but not her phone. Also in this build: usage analytics Layer 1 — logActivity() in db.js, fired from a useEffect in App.jsx on building open, writing one row per person, per building, per Brisbane day to activity_events, with a coarse mobile/desktop hint; the DB half shipped 3 September. const PLATFORM = { name: "Resident Portal", version: "0.30.0" }; // 0.30.0: people were being stranded on old builds. There is no service worker, so any page load fetches the newest code — but nothing makes people load the page, and the home-screen app on iOS has no address bar and no pull-to-refresh, so a phone left open can sit on an old build indefinitely. The build now stamps /version.json (vite.config.js reads PLATFORM.version, so this line stays the single source of truth) and the running app compares it on launch, on focus, on resume from background, and every 15 minutes. When they differ a quiet banner offers Refresh. It never reloads on its own — someone may be mid-way through a maintenance report — and it stays silent when offline or when version.json is missing. netlify.toml gains no-store on version.json and immutable caching on the content-hashed /assets/*, which also makes repeat loads cheaper on mobile data. const PLATFORM = { name: "Resident Portal", version: "0.29.2" }; // 0.29.2 (audit pass): Unit Search "+ Dispute" used createDispute, which has no demo shim, so it failed on demo — it now uses the same store path as the Disputes view and demo disputes show against their unit. Documents: the per-row "Release" button was nested inside the whole-row button (invalid HTML, swallowed clicks); the row is now a keyboard-accessible div. Three handlers failed silently: Messaging with no subject, Bookings with no date, Documents with no file/category — all now say what is missing, and Messaging also rejects an empty body instead of sending it. const PLATFORM = { name: "Resident Portal", version: "0.29.1" }; // 0.29.1: Unit Search opens on a browsable list of every unit — owner and tenant names, pet/vehicle/key counts, agent and notes markers — instead of a bare row of numbers, and the search box filters it by unit number OR resident name as you type. Searching a name that lands on one unit opens it. Fixes a real gap: the unit list was behind an `if (backend)` guard, so on the demo (no Supabase) it never loaded at all and the screen was an empty search box with nothing to discover. New listUnitsOverview() in db.js (5 queries, demo-shimmed). // 0.29.0 combines two streams built in parallel. (a) Versioned Conditions of Approval: inline add/remove replaced by Amend (any BCC member, reason required); each amendment snapshots the prior conditions and every vote cast against them into motion.details.history, bumps motions.version, sets live votes aside and re-alerts the BCC; amendment history with strike-through diff; tally labelled with the version it counts. (b) Unit registry: edit + remove on every person, pet, vehicle, key and breach; unit-level edit (lot, spaces, notes); owners/tenants archived via Moved out (is_current + move_out) and restorable under "Previously at this unit"; "replacing the current owner/tenant" archives the incumbent; new Unit notes card; App account badges matched on email (green) or same-unit name (amber); "App members not on the register" with one-tap add; Other contacts section for emergency contacts and property managers. Plus: disputes now link to units in both directions (Log from Unit Search, unit picker in Disputes) — unit_id was never written before, so the Disputes section could never populate; Managing agent card always offered rather than hidden until a tenant exists; per-building "Who maintains the unit register" toggle (Settings, committee-only) letting the BM maintain the register, off by default, enforced by can_edit_unit_registry() in the database. Migrations: unit_health_check rewrite, amend_motion_conditions + motions.version, can_edit_unit_registry + registry policies. // 0.27.0: "Set up by" provenance line on the committee dashboard and in Settings (who established the record, who funds it, committee-only Change with append-only novations; stamped at the final Getting Started gate); "Export everything" beside it, built on the existing building export, with a visible export log (who, when) on building.exports. Export no longer pulls document/gallery file payloads into the workbook (reads the *_meta views). // 0.26.0: Maintenance Report v2 — summary page first (five tiles incl. Approved this period, "waiting on your decision" panel with dates sent, waiting-on breakdown, oldest open item), detail grouped by what each item is waiting on, resolved items as a compact table with a period total; per-item "waiting on" field (Triage card); exactly one ACCEPTED quote per item; duplicate-title nudge on report. // 0.25.1: By-law sub-clauses get a proper hanging indent — wrapped lines align under their clause. // 0.25.0: By-laws sort numerically and keep their line breaks; NaloPilot sends buildingId so nalo-answer answers from the building's own by-laws. // 0.23.0: NaloHub Guides — 8 role-aware task walkthroughs (guide drawer with Show me highlighting + progress) and printable A4 cheat sheets rendered from the same GUIDES data. // 0.22.0: Minute-ready Maintenance Report (Word, date range) on Reports; historical maintenance entry (backdated Reported on / Resolved on, BM & committee only) on the Maintenance report form. // 0.20.0: Managing-agent CTA for leased units, multi-recipient announcements, scheme/plan reference in setup+settings, editable Dashboard label + dashboard reorder, motion document uploads, Fire Safety evacuation plan, maintenance-workflow progress bar + next-step, header actions moved into the body.
 // prior: // 0.13.0: Alerts centre, BCC auto-vote for applications, motion Q&A + attachments, trade/category dropdowns, contract upload, walk-through photos + Word export + editable checklist, Unit Search owners/tenant/agent + legacy fob link
 // SeaHaven demo building logo (coastal apartment illustration)
 const SEAHAVEN_LOGO = "data:image/png;base64,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";
@@ -4979,31 +4982,32 @@ function Meetings() {
 }
 
 // ---------- key & fob register (committee only) -----------------------------
-// Reads unit_access_items -- the SAME table Unit Search reads and writes.
+// Reads unit_access_items, the same table Unit Search uses. Four views behind
+// one screen: the register itself, the building's descriptor catalogue, unit
+// entitlements, and the Caretaker's annual audit.
 //
-// Until v0.32.0 this screen read the legacy `store.keyfobs` JSONB store, while
-// every access item added through Unit Search went to `unit_access_items`. The
-// two were never connected, so Curve Birtinya could hold 230 real keys imported
-// from the building manager's register and still show an empty register.
-// Nothing was missing; the screen was reading the wrong table.
+// Descriptors are per-building DATA, not a fixed list (migration 0019). The
+// Curve Birtinya BCC asked for thirteen "descriptors", but eight differed only
+// by fire-stair level and two were the Purpose axis welded into a string. A
+// fixed list would make a new level a schema change and bake one building's
+// floor plan into every building. Each descriptor still carries an item_type
+// and purpose underneath, so the filters keep working.
 //
-// Legacy `keyfobs` rows are still merged in read-only and badged, the same way
-// Unit Search does it, so the old store is never orphaned. They are NOT
-// migrated: two of the four remaining rows name a unit that has no `units`
-// record, and inventing lot records to satisfy a foreign key would be worse
-// than showing them as legacy.
-//
-// Holder honesty: a BM register records a key against a LOT, not a person. All
-// 230 Curve rows have no `issued_to`. `occupants` (from listAccessItems) exists
-// so the register can be SEARCHED by resident name, but an occupant is never
-// rendered as the holder -- an inferred holder column in a key register is
-// worse than an empty one the moment anyone relies on it.
+// Holder honesty is unchanged: a device with no recorded holder says so rather
+// than borrowing the unit's occupants.
 const AI_TYPES = [["key", "Key"], ["fob", "Fob"], ["remote", "Remote"], ["swipe_card", "Swipe card"], ["digital_card", "Digital card"], ["other", "Other"]];
 const AI_PURPOSES = [["resident", "Resident"], ["master", "Master"], ["service", "Service"], ["other", "Other"]];
-const AI_STATUSES = [["issued", "Issued"], ["returned", "Returned"], ["lost", "Lost"], ["deactivated", "Deactivated"]];
+// 'lost' is legacy and still renders; new withdrawals are Suspended, which the
+// BCC asked for explicitly: lost devices are suspended and never deleted.
+const AI_STATUSES = [["issued", "Issued"], ["on_hand", "On hand"], ["returned", "Returned"], ["suspended", "Suspended"], ["lost", "Lost"], ["deactivated", "Deactivated"]];
+const AI_STATUS_PICK = [["issued", "Issued"], ["on_hand", "On hand (held by the BM)"], ["returned", "Returned"], ["suspended", "Suspended"]];
+const AI_ROLES = [["owner", "Owner"], ["managing_agent", "Managing agent"], ["tenant", "Tenant"], ["building_manager", "Building manager"], ["contractor", "Contractor"], ["other", "Other"]];
 const aiLabel = (pairs, v) => { const hit = pairs.find((p) => p[0] === v); return hit ? hit[1] : (v || "—"); };
-const KF_CSV_HEADERS = ["unit", "type", "purpose", "identifier", "label", "holder", "status", "notes"];
-const blankAI = () => ({ unit: "", item_type: "key", purpose: "resident", identifier: "", label: "", issued_to: "", issued_at: today(), status: "issued", notes: "" });
+const KF_CSV_HEADERS = ["unit", "descriptor", "identifier", "holder", "issued_to_role", "status", "notes"];
+const KF_ENT_HEADERS = ["unit", "descriptor", "entitlement"];
+const KF_CLASSIFY_HEADERS = ["identifier", "descriptor"];
+const blankAI = () => ({ unit: "", descriptor_id: "", identifier: "", label: "", issued_to: "", issued_to_role: "", owner_authority: false, owner_authority_by: "", issued_at: today(), status: "issued", notes: "" });
+const blankDesc = () => ({ id: "", name: "", item_type: "key", purpose: "resident", stock_tracked: false, sort: 0, active: true });
 // Building-level devices (no unit) sort first: a master key matters more to the
 // committee than lot 101's third fob.
 const aiSort = (a, b) => {
@@ -5013,63 +5017,93 @@ const aiSort = (a, b) => {
   const an = !isNaN(na), bn = !isNaN(nb);
   if (an && bn && na !== nb) return na - nb;
   if (an !== bn) return an ? -1 : 1;
-  return ua.localeCompare(ub) || String(a.identifier || "").localeCompare(String(b.identifier || ""));
+  return ua.localeCompare(ub) || (a.descriptor_sort || 0) - (b.descriptor_sort || 0)
+    || String(a.identifier || "").localeCompare(String(b.identifier || ""));
 };
 
-// Module level on purpose. A form component declared inside KeyFobRegister gets
-// a new function identity on every parent render, so React remounts it and each
-// text field loses focus after one character. See the nested-component trap in
-// ARCHITECTURE section 9 -- this file has had three of them.
-function AccessItemForm({ v, setV, units }) {
+// Module level: a form declared inside the screen gets a new function identity
+// every render and remounts on each keystroke. ARCHITECTURE section 9.
+function AccessItemForm({ v, setV, units, descriptors }) {
+  const { T } = useApp();
   const set = (k) => (e) => setV({ ...v, [k]: e.target.value });
+  const needsAuthority = v.issued_to_role === "tenant";
   return (<div className="space-y-3">
     <div className="grid sm:grid-cols-2 gap-3">
       <Field label="Unit"><Select value={v.unit} onChange={set("unit")}><option value="">Common property — no unit</option>{units.map((u) => <option key={u.id} value={u.unit_number}>{u.unit_number}</option>)}</Select></Field>
+      <Field label="Descriptor"><Select value={v.descriptor_id} onChange={set("descriptor_id")}><option value="">— not classified —</option>{descriptors.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></Field>
+    </div>
+    <div className="grid sm:grid-cols-2 gap-3">
       <Field label="Key number / serial"><Input value={v.identifier} onChange={set("identifier")} placeholder="e.g. 29305D36" /></Field>
+      <Field label="Status"><Select value={v.status} onChange={set("status")}>{AI_STATUS_PICK.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
     </div>
     <div className="grid sm:grid-cols-2 gap-3">
-      <Field label="Type — what it is"><Select value={v.item_type} onChange={set("item_type")}>{AI_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
-      <Field label="Purpose — what it's for"><Select value={v.purpose} onChange={set("purpose")}>{AI_PURPOSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
+      <Field label="Issued to (name)"><Input value={v.issued_to} onChange={set("issued_to")} placeholder="Leave blank if not recorded" /></Field>
+      <Field label="They are the"><Select value={v.issued_to_role} onChange={set("issued_to_role")}><option value="">— not recorded —</option>{AI_ROLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
     </div>
+    {needsAuthority && (<Card style={{ padding: 12, background: hexToRgba(SEMANTIC.warn, 0.08), border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.35)}` }}>
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <input type="checkbox" checked={!!v.owner_authority} onChange={(e) => setV({ ...v, owner_authority: e.target.checked })} className="mt-1" />
+        <span>The owner has authorised this issue to the tenant.</span>
+      </label>
+      {v.owner_authority && <div className="mt-2"><Field label="Authorised by"><Input value={v.owner_authority_by} onChange={set("owner_authority_by")} placeholder="Owner's name" /></Field></div>}
+    </Card>)}
     <div className="grid sm:grid-cols-2 gap-3">
-      <Field label="Holder — leave blank if not recorded"><Input value={v.issued_to} onChange={set("issued_to")} placeholder="Name on the register" /></Field>
-      <Field label="Issued"><Input type="date" value={v.issued_at || ""} onChange={set("issued_at")} /></Field>
-    </div>
-    <div className="grid sm:grid-cols-2 gap-3">
-      <Field label="Label (optional)"><Input value={v.label} onChange={set("label")} placeholder="Lobby and garage" /></Field>
-      <Field label="Status"><Select value={v.status} onChange={set("status")}>{AI_STATUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
+      <Field label="Issued on"><Input type="date" value={v.issued_at || ""} onChange={set("issued_at")} /></Field>
+      <Field label="Label (optional)"><Input value={v.label} onChange={set("label")} /></Field>
     </div>
     <Field label="Notes (optional)"><Input value={v.notes} onChange={set("notes")} /></Field>
+  </div>);
+}
+
+function DescriptorForm({ v, setV }) {
+  const set = (k) => (e) => setV({ ...v, [k]: e.target.value });
+  return (<div className="space-y-3">
+    <Field label="Name — exactly as the committee says it"><Input value={v.name} onChange={set("name")} placeholder="Building and Fire Stairs Key - Level 8" /></Field>
+    <div className="grid sm:grid-cols-3 gap-3">
+      <Field label="Device type"><Select value={v.item_type} onChange={set("item_type")}>{AI_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
+      <Field label="Purpose"><Select value={v.purpose} onChange={set("purpose")}>{AI_PURPOSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
+      <Field label="Order"><Input type="number" value={v.sort} onChange={set("sort")} /></Field>
+    </div>
+    <label className="flex items-start gap-2 text-sm cursor-pointer">
+      <input type="checkbox" checked={!!v.stock_tracked} onChange={(e) => setV({ ...v, stock_tracked: e.target.checked })} className="mt-1" />
+      <span>Counted as stock on hand at the annual audit (fobs and remotes normally are; keys normally are not).</span>
+    </label>
   </div>);
 }
 
 function KeyFobRegister() {
   const { T, store, buildingId, flash, user } = useApp();
   const bldg = (store.buildings || []).find((b) => b.id === buildingId) || {};
-  // Mirrors can_edit_unit_registry(bid) in the database, so the screen never
-  // offers a control the DB would refuse. Same rule as UnitSearchView.
   const canEdit = isCommittee(user.role) || (user.role === "manager" && !!bldg.bmRegistryWrite);
 
+  const [tab, setTab] = useState("register");   // register | descriptors | entitlements | audit
   const [rows, setRows] = useState([]);
   const [units, setUnits] = useState([]);
+  const [descriptors, setDescriptors] = useState([]);
+  const [ents, setEnts] = useState([]);
+  const [auditRows, setAuditRows] = useState([]);
   const [busy, setBusy] = useState(true);
   const [q, setQ] = useState("");
   const [fStatus, setFStatus] = useState("all");
-  const [fType, setFType] = useState("all");
-  const [fPurpose, setFPurpose] = useState("all");
+  const [fDesc, setFDesc] = useState("all");
   const [adding, setAdding] = useState(false);
   const [f, setF] = useState(blankAI());
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState(blankAI());
+  const [dEdit, setDEdit] = useState(null);
+  const [df, setDf] = useState(blankDesc());
+  const [entUnit, setEntUnit] = useState("");
 
-  // Deliberately NOT gated on `backend`: the DEMO_MODE block shims both of
-  // these, and gating a data load on `backend` is precisely what left Unit
-  // Search showing an empty search box in v0.29.1.
+  // NOT gated on `backend`: the demo shims answer all of these, and gating a
+  // data load on `backend` is what left Unit Search empty in v0.29.1.
   const load = async () => {
     setBusy(true);
     try {
-      const [items, us] = await Promise.all([listAccessItems(buildingId), listUnits(buildingId)]);
-      setRows(items || []); setUnits(us || []);
+      const [items, us, ds, es, au] = await Promise.all([
+        listAccessItems(buildingId), listUnits(buildingId), listAccessDescriptors(buildingId),
+        listAccessEntitlements(buildingId), runAccessAudit(buildingId),
+      ]);
+      setRows(items || []); setUnits(us || []); setDescriptors(ds || []); setEnts(es || []); setAuditRows(au || []);
     } catch (e) { flash("Couldn't load the register."); }
     setBusy(false);
   };
@@ -5078,144 +5112,142 @@ function KeyFobRegister() {
   const legacy = useMemo(() => (store.keyfobs || []).filter((k) => k.buildingId === buildingId).map((k) => ({
     id: k.id, legacy: true, unit_number: k.unit || "",
     item_type: String(k.type || "key").toLowerCase().replace(/ /g, "_"),
-    purpose: "resident", identifier: k.serial || "", label: k.label || "",
+    purpose: "resident", identifier: k.serial || "", label: k.label || "", descriptor: "",
     issued_to: k.holder || "", issued_at: k.issued || "", status: k.status || "issued",
-    notes: k.notes || "", occupants: [],
+    notes: k.notes || "", occupants: [], descriptor_sort: 9999,
   })), [store.keyfobs, buildingId]);
 
   const all = useMemo(() => rows.concat(legacy).slice().sort(aiSort), [rows, legacy]);
+  const descById = useMemo(() => { const m = {}; descriptors.forEach((d) => { m[d.id] = d; }); return m; }, [descriptors]);
+  const unitById = useMemo(() => { const m = {}; units.forEach((u) => { m[u.id] = u.unit_number; }); return m; }, [units]);
 
-  // `base` is everything matching the search box and the Type/Purpose menus but
-  // NOT the status chips, so each chip count describes the current search rather
-  // than the whole building. The tiles read from `base` too.
-  //
-  // They did not at first, and that alone made the screen look broken: searching
-  // "Ferguson" correctly narrowed 231 devices to the 2 at unit 606, while every
-  // tile and chip still read 231. The list was right and the numbers around it
-  // said nothing had happened, which is indistinguishable from a dead search box.
-  // Any count shown beside a filtered list has to describe the filtered list.
   const base = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const hay = (r) => [r.unit_number, r.identifier, r.label, r.issued_to].concat(r.occupants || []).join(" ").toLowerCase();
-    return all.filter((r) => (fType === "all" || r.item_type === fType)
-      && (fPurpose === "all" || (r.purpose || "resident") === fPurpose)
+    const hay = (r) => [r.unit_number, r.identifier, r.label, r.issued_to, r.descriptor].concat(r.occupants || []).join(" ").toLowerCase();
+    return all.filter((r) => (fDesc === "all" || r.descriptor_id === fDesc || (fDesc === "none" && !r.descriptor_id))
       && (!needle || hay(r).includes(needle)));
-  }, [all, q, fType, fPurpose]);
-
+  }, [all, q, fDesc]);
   const shown = useMemo(() => base.filter((r) => fStatus === "all" || r.status === fStatus), [base, fStatus]);
-
-  const filtering = q.trim() !== "" || fType !== "all" || fPurpose !== "all";
-  const clearAll = () => { setQ(""); setFType("all"); setFPurpose("all"); setFStatus("all"); };
+  const filtering = q.trim() !== "" || fDesc !== "all";
+  const clearAll = () => { setQ(""); setFDesc("all"); setFStatus("all"); };
 
   const counts = useMemo(() => {
-    const c = {
-      total: base.length,
+    const c = { total: base.length, registerTotal: all.length,
       units: new Set(base.map((r) => r.unit_number).filter(Boolean)).size,
       noHolder: base.filter((r) => !String(r.issued_to || "").trim()).length,
-      registerTotal: all.length,
-    };
+      unclassified: base.filter((r) => !r.descriptor_id && !r.legacy).length };
     AI_STATUSES.forEach(([k]) => { c[k] = base.filter((r) => r.status === k).length; });
     return c;
   }, [base, all]);
 
   const unitIdFor = (no) => { const u = units.find((x) => btrimU(x.unit_number) === btrimU(no)); return u ? u.id : null; };
+  const patchFrom = (v) => ({
+    descriptor_id: v.descriptor_id || null,
+    identifier: String(v.identifier).trim() || null, label: String(v.label).trim() || null,
+    issued_to: String(v.issued_to).trim() || null, issued_to_role: v.issued_to_role || null,
+    owner_authority: !!v.owner_authority, owner_authority_by: String(v.owner_authority_by || "").trim() || null,
+    issued_at: v.issued_at || null, status: v.status || "issued", notes: String(v.notes).trim() || null,
+  });
 
   const add = async () => {
-    if (!String(f.identifier).trim() && !String(f.label).trim()) { flash("Add a key number or a label."); return; }
+    if (!String(f.identifier).trim() && !f.descriptor_id) { flash("Add a key number or pick a descriptor."); return; }
+    if (f.issued_to_role === "tenant" && !f.owner_authority) { flash("A tenant issue needs the owner's authority."); return; }
     try {
-      await addAccessItem(buildingId, unitIdFor(f.unit), {
-        item_type: f.item_type, purpose: f.purpose,
-        identifier: String(f.identifier).trim() || null, label: String(f.label).trim() || null,
-        issued_to: String(f.issued_to).trim() || null, issued_at: f.issued_at || today(),
-        status: f.status || "issued", notes: String(f.notes).trim() || null,
-      });
+      const p = patchFrom(f);
+      p.item_type = (descById[f.descriptor_id] || {}).item_type || "key";
+      p.purpose = (descById[f.descriptor_id] || {}).purpose || "resident";
+      await addAccessItem(buildingId, unitIdFor(f.unit), p);
       setF(blankAI()); setAdding(false); flash("Added to the register"); await load();
     } catch (e) { flash("Couldn't add that device."); }
   };
-
   const startEdit = (r) => { setEditId(r.id); setEf({
-    unit: r.unit_number || "", item_type: r.item_type || "key", purpose: r.purpose || "resident",
-    identifier: r.identifier || "", label: r.label || "", issued_to: r.issued_to || "",
-    issued_at: String(r.issued_at || "").slice(0, 10), status: r.status || "issued", notes: r.notes || "",
-  }); };
-
+    unit: r.unit_number || "", descriptor_id: r.descriptor_id || "", identifier: r.identifier || "",
+    label: r.label || "", issued_to: r.issued_to || "", issued_to_role: r.issued_to_role || "",
+    owner_authority: !!r.owner_authority, owner_authority_by: r.owner_authority_by || "",
+    issued_at: String(r.issued_at || "").slice(0, 10), status: r.status || "issued", notes: r.notes || "" }); };
   const saveEdit = async (r) => {
+    if (ef.issued_to_role === "tenant" && !ef.owner_authority) { flash("A tenant issue needs the owner's authority."); return; }
     try {
-      await updateAccessItem(buildingId, r.id, {
-        unit_id: unitIdFor(ef.unit), item_type: ef.item_type, purpose: ef.purpose,
-        identifier: String(ef.identifier).trim() || null, label: String(ef.label).trim() || null,
-        issued_to: String(ef.issued_to).trim() || null, issued_at: ef.issued_at || null,
-        status: ef.status || "issued", notes: String(ef.notes).trim() || null,
-        returned_at: ef.status === "returned" ? today() : null,
-      });
+      const p = patchFrom(ef);
+      p.unit_id = unitIdFor(ef.unit);
+      p.item_type = (descById[ef.descriptor_id] || {}).item_type || r.item_type || "key";
+      p.purpose = (descById[ef.descriptor_id] || {}).purpose || r.purpose || "resident";
+      p.returned_at = ef.status === "returned" ? today() : null;
+      await updateAccessItem(buildingId, r.id, p);
       setEditId(null); flash("Device updated"); await load();
     } catch (e) { flash("Couldn't save that change."); }
   };
-
   const setStatus = async (r, status) => {
     try { await updateAccessItem(buildingId, r.id, { status, returned_at: status === "returned" ? today() : null }); await load(); }
     catch (e) { flash("Couldn't update the status."); }
+  };
+  const suspend = async (r) => {
+    const reason = window.prompt("Why is this being suspended? (lost, withdrawn, damaged)");
+    if (reason === null) return;
+    try { await suspendAccessItem(buildingId, r.id, reason); flash("Suspended — the record is kept"); await load(); }
+    catch (e) { flash("Couldn't suspend that device."); }
   };
   const remove = async (r) => {
     try { await deleteAccessItem(buildingId, r.id); flash("Device removed"); await load(); }
     catch (e) { flash("Couldn't remove that device."); }
   };
+  const attachReceipt = async (r, file) => {
+    if (!file) return;
+    setBusy(true);
+    try { await uploadAccessReceipt(buildingId, r.id, file); flash("Signed receipt attached"); await load(); }
+    catch (e) { flash("Couldn't upload that receipt."); }
+    setBusy(false);
+  };
+  const openReceipt = async (r) => {
+    try { const u = await accessReceiptUrl(r.receipt_path); if (u) window.open(u, "_blank"); }
+    catch (e) { flash("Couldn't open that receipt."); }
+  };
 
-  const downloadTemplate = () => downloadCSV("nalohub-keyfob-template.csv", toCSV(KF_CSV_HEADERS, [
-    { unit: "101", type: "fob", purpose: "resident", identifier: "29305D36", label: "Lobby and garage", holder: "", status: "issued", notes: "" },
-    { unit: "", type: "key", purpose: "master", identifier: "M-01", label: "Master - all common areas", holder: "Building manager", status: "issued", notes: "Leave unit blank for a building device" },
-  ]));
-
-  const exportCsv = () => downloadCSV("nalohub-keyfob-register.csv", toCSV(KF_CSV_HEADERS, shown.map((r) => ({
-    unit: r.unit_number || "", type: r.item_type, purpose: r.purpose || "resident",
-    identifier: r.identifier || "", label: r.label || "", holder: r.issued_to || "",
-    status: r.status, notes: r.notes || "",
+  // ---- CSV in and out -------------------------------------------------------
+  const exportRegister = () => downloadCSV("nalohub-keyfob-register.csv", toCSV(KF_CSV_HEADERS, shown.map((r) => ({
+    unit: r.unit_number || "", descriptor: r.descriptor || "", identifier: r.identifier || "",
+    holder: r.issued_to || "", issued_to_role: r.issued_to_role || "", status: r.status, notes: r.notes || "",
   }))));
-
-  const onUpload = async (e) => {
+  const exportAudit = () => downloadCSV("nalohub-key-audit-" + today() + ".csv", toCSV(
+    ["scope", "unit", "descriptor", "entitlement", "issued", "on_hand", "held", "suspended", "variance"],
+    auditRows.map((a) => ({ scope: a.scope, unit: a.unit_number || "", descriptor: a.descriptor,
+      entitlement: a.entitlement, issued: a.issued, on_hand: a.on_hand, held: a.held,
+      suspended: a.suspended, variance: a.variance }))));
+  const csvIn = (headers, handler) => async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
-    let parsed = [];
-    try { parsed = parseCSV(await readFileText(file)).filter((r) => String(r.identifier || r.serial || r.label || "").trim()); }
-    catch (err) { flash("Couldn't read that file."); return; }
-    if (!parsed.length) { flash("No devices found — check the file matches the template."); return; }
-    const types = AI_TYPES.map((t) => t[0]), purposes = AI_PURPOSES.map((x) => x[0]), statuses = AI_STATUSES.map((x) => x[0]);
-    let ok = 0, failed = 0;
-    for (const r of parsed) {
-      const t = String(r.type || "").toLowerCase().replace(/ /g, "_");
-      const pp = String(r.purpose || "").toLowerCase();
-      const st = String(r.status || "").toLowerCase();
-      try {
-        await addAccessItem(buildingId, unitIdFor(r.unit), {
-          item_type: types.includes(t) ? t : "key",
-          purpose: purposes.includes(pp) ? pp : "resident",
-          identifier: String(r.identifier || r.serial || "").trim() || null,
-          label: String(r.label || "").trim() || null,
-          issued_to: String(r.holder || "").trim() || null,
-          issued_at: today(), status: statuses.includes(st) ? st : "issued",
-          notes: String(r.notes || "").trim() || null,
-        });
-        ok++;
-      } catch (err) { failed++; }
-    }
-    await load();
-    flash(ok + " device(s) imported" + (failed ? " · " + failed + " couldn't be added" : ""));
+    setBusy(true);
+    try {
+      const parsed = parseCSV(await readFileText(file));
+      const res = await handler(parsed);
+      flash(res);
+      await load();
+    } catch (err) { flash("Couldn't read that file."); }
+    setBusy(false);
   };
+  const onEntCsv = csvIn(KF_ENT_HEADERS, async (parsed) => {
+    const r = await bulkSetAccessEntitlements(buildingId, parsed);
+    return r.set + " entitlement(s) set" + (r.skipped.length ? " · " + r.skipped.length + " skipped" : "");
+  });
+  const onClassifyCsv = csvIn(KF_CLASSIFY_HEADERS, async (parsed) => {
+    const r = await bulkClassifyAccessItems(buildingId, parsed);
+    return r.classified + " device(s) classified" + (r.skipped.length ? " · " + r.skipped.length + " skipped" : "");
+  });
 
-  const STC = { issued: SEMANTIC.ok, returned: T.textMuted, lost: SEMANTIC.bad, deactivated: T.textMuted };
+  const STC = { issued: SEMANTIC.ok, on_hand: "#3b82f6", returned: T.textMuted, lost: SEMANTIC.bad, suspended: SEMANTIC.bad, deactivated: T.textMuted };
   const csvBtn = { display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", background: T.surface, color: T.text, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 600 };
   const chip = (key, on, label, onClick) => <button key={key} onClick={onClick} className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: on ? T.accent : T.surface, color: on ? T.accentText : T.textMuted, border: `1px solid ${on ? "transparent" : T.border}` }}>{label}</button>;
+  const tabBtn = (k, label) => <button key={k} onClick={() => setTab(k)} className="px-3.5 py-2 rounded-xl text-sm font-semibold" style={{ background: tab === k ? T.accent : T.surface, color: tab === k ? T.accentText : T.textMuted, border: `1px solid ${tab === k ? "transparent" : T.border}` }}>{label}</button>;
 
-  // Plain function call, not <Row/> -- see the note on AccessItemForm above.
+  // Plain function call, not <Row/> — the nested-component remount trap.
   const row = (r) => {
     if (editId === r.id) return (<Card key={r.id} style={{ padding: 18 }}>
-      <AccessItemForm v={ef} setV={setEf} units={units} />
+      <AccessItemForm v={ef} setV={setEf} units={units} descriptors={descriptors} />
       <div className="flex gap-2 mt-3"><Btn grad onClick={() => saveEdit(r)}>Save</Btn><Btn kind="ghost" onClick={() => setEditId(null)}>Cancel</Btn></div>
     </Card>);
     const holder = String(r.issued_to || "").trim();
     const occ = (r.occupants || []).filter(Boolean);
-    const purpose = r.purpose || "resident";
     return (<Card key={r.id} style={{ padding: 14 }}>
       <div className="flex items-start gap-3">
         <div className="h-10 w-10 rounded-xl grid place-items-center shrink-0" style={{ background: hexToRgba(T.accent, T.mode === "dark" ? 0.2 : 0.12), color: T.accent }}><KeyRound size={18} /></div>
@@ -5223,22 +5255,29 @@ function KeyFobRegister() {
           <div className="font-semibold text-sm flex items-center gap-x-2 gap-y-1 flex-wrap">
             <span>{r.unit_number ? "Unit " + r.unit_number : "Common property"}</span>
             <span style={{ color: T.textMuted }}>·</span>
-            <span>{aiLabel(AI_TYPES, r.item_type)}</span>
+            <span>{r.descriptor || aiLabel(AI_TYPES, r.item_type)}</span>
             {r.identifier && <span style={{ color: T.textMuted }}>· #{r.identifier}</span>}
-            {purpose !== "resident" && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide" style={{ background: hexToRgba(SEMANTIC.warn, 0.16), color: SEMANTIC.warn }}>{aiLabel(AI_PURPOSES, purpose)}</span>}
+            {!r.descriptor && !r.legacy && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide" style={{ background: hexToRgba(SEMANTIC.warn, 0.16), color: SEMANTIC.warn }}>unclassified</span>}
             {r.legacy && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: T.surfaceAlt, color: T.textMuted, border: `1px solid ${T.border}` }}>legacy register</span>}
           </div>
           <div className="text-xs mt-1" style={{ color: T.textMuted }}>
             {r.label ? r.label + " · " : ""}
             <span style={{ color: STC[r.status] || T.textMuted, fontWeight: 600 }}>{aiLabel(AI_STATUSES, r.status)}</span>
             {r.issued_at ? " · issued " + fmtDate(String(r.issued_at).slice(0, 10)) : ""}
+            {r.suspended_reason ? " · " + r.suspended_reason : ""}
           </div>
           <div className="text-xs mt-1">
             {holder
-              ? <span>Holder: <span className="font-medium">{holder}</span>{r.ack_at ? " · receipt confirmed " + fmtDate(String(r.ack_at).slice(0, 10)) : r.issued_to_user_id ? " · awaiting receipt confirmation" : ""}</span>
+              ? <span>Holder: <span className="font-medium">{holder}</span>{r.issued_to_role ? <span style={{ color: T.textMuted }}> ({aiLabel(AI_ROLES, r.issued_to_role)})</span> : null}{r.owner_authority ? <span style={{ color: SEMANTIC.ok }}> · owner authorised{r.owner_authority_by ? " by " + r.owner_authority_by : ""}</span> : null}</span>
               : <span style={{ color: SEMANTIC.warn, fontWeight: 600 }}>Holder not recorded</span>}
           </div>
           {!holder && occ.length > 0 && <div className="text-[11px] mt-1" style={{ color: T.textMuted }}>Recorded against the lot. Current occupants: {occ.join(", ")} — not a record of who holds it.</div>}
+          <div className="text-[11px] mt-1.5 flex items-center gap-2 flex-wrap">
+            {r.receipt_path
+              ? <button onClick={() => openReceipt(r)} className="inline-flex items-center gap-1 font-semibold" style={{ color: T.accent }}><Paperclip size={12} /> Signed receipt</button>
+              : <span style={{ color: T.textMuted }}>No signed receipt on file</span>}
+            {canEdit && !r.legacy && <label className="inline-flex items-center gap-1 cursor-pointer font-semibold" style={{ color: T.textMuted }}><Upload size={12} /> {r.receipt_path ? "Replace" : "Attach"}<input type="file" className="hidden" onChange={(e) => attachReceipt(r, e.target.files && e.target.files[0])} /></label>}
+          </div>
           {r.notes && <div className="text-[11px] mt-1.5" style={{ color: T.textMuted }}>{r.notes}</div>}
         </div>
         {canEdit && !r.legacy && (<div className="flex flex-col items-end gap-1.5 shrink-0">
@@ -5246,80 +5285,213 @@ function KeyFobRegister() {
             <Btn kind="ghost" onClick={() => startEdit(r)}><Pencil size={14} /></Btn>
             <Btn kind="ghost" onClick={() => remove(r)}><Trash2 size={14} /></Btn>
           </div>
-          {r.status === "issued"
-            ? <div className="flex gap-1.5"><Btn kind="ghost" onClick={() => setStatus(r, "returned")}>Returned</Btn><Btn kind="ghost" onClick={() => setStatus(r, "lost")}>Lost</Btn></div>
-            : <Btn kind="ghost" onClick={() => setStatus(r, "issued")}>Re-issue</Btn>}
+          {r.status === "issued" && <div className="flex gap-1.5"><Btn kind="ghost" onClick={() => setStatus(r, "on_hand")}>On hand</Btn><Btn kind="ghost" onClick={() => setStatus(r, "returned")}>Returned</Btn></div>}
+          {r.status === "on_hand" && <Btn kind="ghost" onClick={() => setStatus(r, "issued")}>Issue</Btn>}
+          {r.status !== "suspended" && <Btn kind="ghost" onClick={() => suspend(r)}>Suspend</Btn>}
+          {r.status === "suspended" && <Btn kind="ghost" onClick={() => setStatus(r, "on_hand")}>Reinstate</Btn>}
         </div>)}
       </div>
     </Card>);
   };
 
-  return (<div>
-    <Head title="Key & Fob Register" sub="Every access device in the building — searchable by unit, name or key number" action={canEdit ? <HeaderAction onClick={() => setAdding(true)} data-guide="keyfob-add"><Plus size={16} /> Add</HeaderAction> : null} />
-    <Wrap>
-      <HowTo id="keyfobs" steps={["Type a unit number, a resident's name or a key number — one box searches all three.", "Narrow the list with the status chips, or the Type and Purpose menus.", "⟨Add⟩ records a new device; leave the unit blank for a building key. ⟨Upload CSV⟩ loads a whole register at once."]} sell="Who holds what, across every lot and the common areas, in one searchable list — and the gaps show up instead of hiding." />
-
-      <Card style={{ padding: 14 }}>
-        <div className="flex items-center gap-2"><Search size={15} style={{ color: T.textMuted }} /><Input placeholder="Unit, name or key number…" value={q} onChange={(e) => setQ(e.target.value)} />{q && <Btn kind="ghost" onClick={() => setQ("")}><X size={14} /></Btn>}</div>
-      </Card>
-
-      {filtering && (<Card style={{ padding: 12, background: hexToRgba(T.accent, 0.08), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}>
-        <div className="text-sm flex items-center gap-2 flex-wrap">
-          <Search size={14} style={{ color: T.accent, flexShrink: 0 }} />
-          <span>
-            <span className="font-semibold">{counts.total} of {counts.registerTotal}</span> {counts.total === 1 ? "device" : "devices"}{" "}
-            {q.trim() ? <>matching <span className="font-semibold">{q.trim()}</span></> : "matching these filters"}
-            {counts.units > 0 && <span style={{ color: T.textMuted }}> · {counts.units} {counts.units === 1 ? "unit" : "units"}</span>}
-          </span>
-          <button onClick={clearAll} className="text-xs font-semibold underline" style={{ color: T.accent }}>Clear</button>
-        </div>
-      </Card>)}
-
-      <div className="grid grid-cols-3 gap-3">
-        {[[filtering ? "Devices found" : "Devices", counts.total], ["Units covered", counts.units], ["No holder recorded", counts.noHolder]].map(([l, v]) => (
-          <Card key={l} style={{ padding: 14 }}><div className="text-2xl font-bold">{v}</div><div className="text-[11px] mt-0.5" style={{ color: T.textMuted }}>{l}</div></Card>
-        ))}
+  // ---- audit view -----------------------------------------------------------
+  const auditView = () => {
+    const unitRows = auditRows.filter((a) => a.scope === "unit");
+    const stockRows = auditRows.filter((a) => a.scope === "stock");
+    const unclRows = auditRows.filter((a) => a.scope === "unclassified");
+    // A row with no entitlement set is NOT a variance: there is nothing to vary
+    // from, and the table already shows "—" for it. Counting those as variances
+    // made the demo read "28 variances" over a table showing none, which is the
+    // same misleading-counter bug as v0.32.1. A count beside a table has to
+    // describe that table.
+    const withEnt = unitRows.filter((a) => a.entitlement > 0);
+    const variances = withEnt.filter((a) => a.variance !== 0);
+    const noEnt = unitRows.length - withEnt.length;
+    const unclTotal = unclRows.reduce((n, a) => n + a.issued + a.on_hand + a.suspended + a.returned, 0);
+    const cell = { padding: "6px 8px", fontSize: 12, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" };
+    const head = { ...cell, color: T.textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10 };
+    const table = (title, list, showUnit) => list.length === 0 ? null : (
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div className="px-4 py-3 font-semibold text-sm" style={{ borderBottom: `1px solid ${T.border}` }}>{title}</div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>{(showUnit ? ["Unit"] : []).concat(["Descriptor", "Entitled", "Issued", "On hand", "Held", "Suspended", "Variance"]).map((h) => <th key={h} style={{ ...head, textAlign: h === "Descriptor" || h === "Unit" ? "left" : "right" }}>{h}</th>)}</tr></thead>
+          <tbody>{list.map((a, i) => (<tr key={i}>
+            {showUnit && <td style={cell}>{a.unit_number || "—"}</td>}
+            <td style={cell}>{a.descriptor}</td>
+            <td style={{ ...cell, textAlign: "right" }}>{a.entitlement || "—"}</td>
+            <td style={{ ...cell, textAlign: "right" }}>{a.issued}</td>
+            <td style={{ ...cell, textAlign: "right" }}>{a.on_hand}</td>
+            <td style={{ ...cell, textAlign: "right", fontWeight: 700 }}>{a.held}</td>
+            <td style={{ ...cell, textAlign: "right", color: a.suspended ? SEMANTIC.bad : T.textMuted }}>{a.suspended || "—"}</td>
+            <td style={{ ...cell, textAlign: "right", fontWeight: 700, color: a.variance === 0 ? SEMANTIC.ok : SEMANTIC.bad }}>{a.entitlement ? (a.variance > 0 ? "+" + a.variance : a.variance) : "—"}</td>
+          </tr>))}</tbody>
+        </table></div>
+      </Card>);
+    return (<>
+      <HowTo id="keyaudit" steps={["Check each unit's Held against its Entitled. A variance is a discrepancy to chase.", "Count the fobs and remotes physically on hand and compare with the Stock table.", "⟨Download the audit⟩ gives you the whole thing as a spreadsheet to sign off."]} sell="The annual key audit as a single reconciliation, instead of a clipboard and a filing cabinet." />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[["Units reconciled", new Set(withEnt.map((a) => a.unit_number)).size, false],
+          ["Variances", variances.length, true],
+          ["No entitlement set", noEnt, true],
+          ["Not yet classified", unclTotal, true]].map(([l, v, warn]) => (
+          <Card key={l} style={{ padding: 14 }}><div className="text-2xl font-bold" style={{ color: warn && v > 0 ? SEMANTIC.warn : T.text }}>{v}</div><div className="text-[11px] mt-0.5" style={{ color: T.textMuted }}>{l}</div></Card>))}
       </div>
-
-      {!filtering && counts.noHolder > 0 && (<Card style={{ padding: 14, background: hexToRgba(SEMANTIC.warn, 0.08), border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.35)}` }}>
+      {noEnt > 0 && (<Card style={{ padding: 14, background: hexToRgba(SEMANTIC.warn, 0.08), border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.35)}` }}>
         <div className="text-sm flex items-start gap-2">
           <AlertTriangle size={15} style={{ color: SEMANTIC.warn, marginTop: 2, flexShrink: 0 }} />
-          <span><span className="font-semibold">{counts.noHolder} of {counts.total} devices have no holder recorded.</span> They sit against a lot rather than a person, which is how most building manager registers are kept. Searching a resident's name still finds them through the unit, but the register can't say who physically holds one until a name is added.</span>
+          <span><span className="font-semibold">{noEnt} unit and descriptor combinations have devices but no entitlement.</span> Nothing says how many that unit is supposed to hold, so those rows show a count but cannot be reconciled. Set the numbers on the Entitlements tab, or load them all at once from the committee's own sheet.</span>
         </div>
       </Card>)}
+      {unclTotal > 0 && (<Card style={{ padding: 14, background: hexToRgba(SEMANTIC.warn, 0.08), border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.35)}` }}>
+        <div className="text-sm flex items-start gap-2">
+          <AlertTriangle size={15} style={{ color: SEMANTIC.warn, marginTop: 2, flexShrink: 0 }} />
+          <span><span className="font-semibold">{unclTotal} devices have no descriptor yet.</span> They are counted below but cannot be reconciled against an entitlement until each one is identified. Use ⟨Classify from CSV⟩ on the Register tab once the building manager confirms which key number is which.</span>
+        </div>
+      </Card>)}
+      <div className="flex gap-2 flex-wrap">
+        <button type="button" onClick={exportAudit} style={csvBtn}><Download size={14} /> Download the audit</button>
+      </div>
+      {auditRows.length === 0 ? <Empty icon={ClipboardCheck} title="Nothing to audit yet" hint="Set entitlements and classify the devices, and the reconciliation appears here." />
+        : <>{table("By unit", unitRows, true)}{table("Building stock on hand", stockRows, false)}{table("Not yet classified", unclRows, true)}</>}
+    </>);
+  };
 
+  // ---- entitlements view ----------------------------------------------------
+  const entView = () => {
+    const uid = unitIdFor(entUnit);
+    const entFor = (did) => { const e = ents.find((x) => x.unit_id === uid && x.descriptor_id === did); return e ? e.entitlement : 0; };
+    const save = async (did, val) => {
+      if (!uid) return;
+      try { await setAccessEntitlement(buildingId, uid, did, val); await load(); }
+      catch (e) { flash("Couldn't save that entitlement."); }
+    };
+    return (<>
+      <HowTo id="keyents" steps={["Pick a unit, then set how many of each descriptor it is entitled to hold.", "Or load every unit at once with ⟨Upload entitlements⟩ using the CSV template.", "The audit compares these numbers against what is actually issued and on hand."]} sell="The entitlement is the reference the whole audit reconciles against, so it is worth setting once, properly." />
       <Card style={{ padding: 14, background: T.surfaceAlt }}>
-        <p style={{ color: T.textMuted }} className="text-sm flex items-center gap-2 mb-3"><Lock size={14} /> Visible to the committee only — residents can't see this page.</p>
         <div className="flex items-center gap-2 flex-wrap">
-          <button type="button" onClick={exportCsv} style={csvBtn}><Download size={14} /> Download register</button>
-          {canEdit && <button type="button" onClick={downloadTemplate} style={csvBtn}><Download size={14} /> CSV template</button>}
-          {canEdit && <label style={csvBtn}><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" onChange={onUpload} style={{ display: "none" }} /></label>}
-          <span style={{ color: T.textMuted, fontSize: 11 }}>Columns: {KF_CSV_HEADERS.join(", ")}</span>
+          <button type="button" onClick={() => downloadCSV("nalohub-entitlements-template.csv", toCSV(KF_ENT_HEADERS, units.slice(0, 3).flatMap((u) => descriptors.slice(0, 3).map((d) => ({ unit: u.unit_number, descriptor: d.name, entitlement: 1 })))))} style={csvBtn}><Download size={14} /> CSV template</button>
+          {canEdit && <label style={csvBtn}><Upload size={14} /> Upload entitlements<input type="file" accept=".csv,text/csv" onChange={onEntCsv} className="hidden" /></label>}
+          <span style={{ color: T.textMuted, fontSize: 11 }}>Columns: {KF_ENT_HEADERS.join(", ")}</span>
+        </div>
+        <div className="text-xs mt-2" style={{ color: T.textMuted }}>{ents.length} entitlement{ents.length === 1 ? "" : "s"} recorded across {new Set(ents.map((e) => e.unit_id)).size} unit{new Set(ents.map((e) => e.unit_id)).size === 1 ? "" : "s"}.</div>
+      </Card>
+      <Card style={{ padding: 14 }}>
+        <Field label="Unit"><Select value={entUnit} onChange={(e) => setEntUnit(e.target.value)}><option value="">— pick a unit —</option>{units.map((u) => <option key={u.id} value={u.unit_number}>{u.unit_number}</option>)}</Select></Field>
+      </Card>
+      {uid && <Card style={{ padding: 0, overflow: "hidden" }}>
+        {descriptors.map((d) => (<div key={d.id} className="px-4 py-2.5 flex items-center gap-3" style={{ borderBottom: `1px solid ${T.border}` }}>
+          <div className="flex-1 text-sm">{d.name}</div>
+          <input type="number" min="0" defaultValue={entFor(d.id)} disabled={!canEdit}
+            onBlur={(e) => { const v = Math.max(0, Number(e.target.value) || 0); if (v !== entFor(d.id)) save(d.id, v); }}
+            style={{ width: 84, background: T.surfaceAlt, border: `1px solid ${T.border}`, color: T.text }}
+            className="rounded-lg px-2.5 py-1.5 text-sm text-right outline-none" />
+        </div>))}
+      </Card>}
+    </>);
+  };
+
+  // ---- descriptor catalogue -------------------------------------------------
+  const descView = () => (<>
+    <HowTo id="keydesc" steps={["These are your building's own names for its keys, fobs and remotes.", "⟨Add⟩ a descriptor for anything missing, for example another fire stairs level.", "Retire one you no longer use; it is kept, not deleted, so existing devices keep their history."]} sell="Every building names its keys differently. This list is yours, not a fixed set someone else chose." />
+    {canEdit && (dEdit === "new" || dEdit ? (
+      <Card style={{ padding: 18 }}>
+        <DescriptorForm v={df} setV={setDf} />
+        <div className="flex gap-2 mt-3">
+          <Btn grad onClick={async () => {
+            if (!String(df.name).trim()) { flash("Give it a name."); return; }
+            try { await saveAccessDescriptor(buildingId, df); setDEdit(null); setDf(blankDesc()); flash("Descriptor saved"); await load(); }
+            catch (e) { flash("Couldn't save that. Is the name already used?"); }
+          }}>Save</Btn>
+          <Btn kind="ghost" onClick={() => { setDEdit(null); setDf(blankDesc()); }}>Cancel</Btn>
         </div>
       </Card>
+    ) : <div><Btn grad onClick={() => { setDEdit("new"); setDf(blankDesc()); }}><Plus size={15} /> Add a descriptor</Btn></div>)}
+    {descriptors.length === 0 ? <Empty icon={Tag} title="No descriptors yet" hint="Add the names your building uses for its keys, fobs and remotes." />
+      : <Card style={{ padding: 0, overflow: "hidden" }}>{descriptors.map((d) => (
+        <div key={d.id} className="px-4 py-3 flex items-center gap-3" style={{ borderBottom: `1px solid ${T.border}` }}>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium">{d.name}</div>
+            <div className="text-[11px] mt-0.5" style={{ color: T.textMuted }}>
+              {aiLabel(AI_TYPES, d.item_type)} · {aiLabel(AI_PURPOSES, d.purpose)}{d.stock_tracked ? " · stock counted" : ""}
+              {" · "}{all.filter((r) => r.descriptor_id === d.id).length} on the register
+            </div>
+          </div>
+          {canEdit && <div className="flex gap-1.5 shrink-0">
+            <Btn kind="ghost" onClick={() => { setDEdit(d.id); setDf({ ...d }); }}><Pencil size={14} /></Btn>
+            <Btn kind="ghost" onClick={async () => { try { await setAccessDescriptorActive(buildingId, d.id, false); flash("Retired"); await load(); } catch (e) { flash("Couldn't retire that."); } }}>Retire</Btn>
+          </div>}
+        </div>))}</Card>}
+  </>);
 
-      {adding && canEdit && (<Card style={{ padding: 18 }}>
-        <AccessItemForm v={f} setV={setF} units={units} />
-        <div className="flex gap-2 mt-3"><Btn grad onClick={add}>Add device</Btn><Btn kind="ghost" onClick={() => { setAdding(false); setF(blankAI()); }}>Cancel</Btn></div>
-      </Card>)}
+  // ---- register view --------------------------------------------------------
+  const registerView = () => (<>
+    <HowTo id="keyfobs" steps={["Type a unit number, a resident's name or a key number — one box searches all three.", "Narrow with the status chips or the descriptor menu.", "⟨Add⟩ records a device; leave the unit blank for a building key. ⟨Classify from CSV⟩ sets descriptors in bulk."]} sell="Who holds what, across every lot and the common areas, with the gaps showing instead of hiding." />
+    <Card style={{ padding: 14 }}>
+      <div className="flex items-center gap-2"><Search size={15} style={{ color: T.textMuted, flexShrink: 0 }} /><Input placeholder="Unit, name or key number…" value={q} onChange={(e) => setQ(e.target.value)} />{q && <Btn kind="ghost" onClick={() => setQ("")}><X size={14} /></Btn>}</div>
+    </Card>
+    {filtering && (<Card style={{ padding: 12, background: hexToRgba(T.accent, 0.08), border: `1px solid ${hexToRgba(T.accent, 0.35)}` }}>
+      <div className="text-sm flex items-center gap-2 flex-wrap">
+        <Search size={14} style={{ color: T.accent, flexShrink: 0 }} />
+        <span><span className="font-semibold">{counts.total} of {counts.registerTotal}</span> {counts.total === 1 ? "device" : "devices"}{" "}
+          {q.trim() ? <>matching <span className="font-semibold">{q.trim()}</span></> : "matching these filters"}</span>
+        <button onClick={clearAll} className="text-xs font-semibold underline" style={{ color: T.accent }}>Clear</button>
+      </div>
+    </Card>)}
+    <div className="grid grid-cols-3 gap-3">
+      {[[filtering ? "Devices found" : "Devices", counts.total], ["Units covered", counts.units], ["No holder recorded", counts.noHolder]].map(([l, v]) => (
+        <Card key={l} style={{ padding: 14 }}><div className="text-2xl font-bold">{v}</div><div className="text-[11px] mt-0.5" style={{ color: T.textMuted }}>{l}</div></Card>))}
+    </div>
+    {!filtering && counts.unclassified > 0 && (<Card style={{ padding: 14, background: hexToRgba(SEMANTIC.warn, 0.08), border: `1px solid ${hexToRgba(SEMANTIC.warn, 0.35)}` }}>
+      <div className="text-sm flex items-start gap-2">
+        <AlertTriangle size={15} style={{ color: SEMANTIC.warn, marginTop: 2, flexShrink: 0 }} />
+        <span><span className="font-semibold">{counts.unclassified} devices have no descriptor.</span> They came across as one undifferentiated batch, so nothing says which is a fire stairs key and which is a unit door key. Until they are classified the audit cannot reconcile them against an entitlement.</span>
+      </div>
+    </Card>)}
+    <Card style={{ padding: 14, background: T.surfaceAlt }}>
+      <p style={{ color: T.textMuted }} className="text-sm flex items-center gap-2 mb-3"><Lock size={14} /> Visible to the committee only — residents can't see this page.</p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={exportRegister} style={csvBtn}><Download size={14} /> Download register</button>
+        {canEdit && <button type="button" onClick={() => downloadCSV("nalohub-classify-template.csv", toCSV(KF_CLASSIFY_HEADERS, all.filter((r) => !r.descriptor_id && !r.legacy).slice(0, 500).map((r) => ({ identifier: r.identifier || "", descriptor: "" }))))} style={csvBtn}><Download size={14} /> Classify template</button>}
+        {canEdit && <label style={csvBtn}><Upload size={14} /> Classify from CSV<input type="file" accept=".csv,text/csv" onChange={onClassifyCsv} className="hidden" /></label>}
+        <span style={{ color: T.textMuted, fontSize: 11 }}>Columns: {KF_CLASSIFY_HEADERS.join(", ")}</span>
+      </div>
+    </Card>
+    {adding && canEdit && (<Card style={{ padding: 18 }}>
+      <AccessItemForm v={f} setV={setF} units={units} descriptors={descriptors} />
+      <div className="flex gap-2 mt-3"><Btn grad onClick={add}>Add device</Btn><Btn kind="ghost" onClick={() => { setAdding(false); setF(blankAI()); }}>Cancel</Btn></div>
+    </Card>)}
+    <div className="flex gap-2 flex-wrap">
+      {chip("s-all", fStatus === "all", "All " + counts.total, () => setFStatus("all"))}
+      {AI_STATUSES.filter(([k]) => counts[k] > 0 || ["issued", "on_hand", "suspended"].includes(k)).map(([k, l]) => chip("s-" + k, fStatus === k, l + " " + (counts[k] || 0), () => setFStatus(k)))}
+    </div>
+    <Select value={fDesc} onChange={(e) => setFDesc(e.target.value)}>
+      <option value="all">All descriptors</option>
+      <option value="none">Not yet classified</option>
+      {descriptors.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+    </Select>
+    {busy ? <Card style={{ padding: 24 }}><div className="text-sm" style={{ color: T.textMuted }}>Loading the register…</div></Card>
+      : shown.length === 0
+        ? <>
+            <Empty icon={KeyRound} title={all.length ? "Nothing matches that search" : "Nothing here yet"} hint={all.length ? "Try a unit number, a resident's name or a key number." : "Add a device, or upload the building manager's register as a CSV."} />
+            {filtering && <div className="text-center"><Btn kind="ghost" onClick={clearAll}>Clear the search</Btn></div>}
+          </>
+        : <>{shown.map(row)}{shown.length < all.length && <div className="text-xs text-center pt-1" style={{ color: T.textMuted }}>Showing {shown.length} of {all.length}</div>}</>}
+  </>);
 
+  return (<div>
+    <Head title="Key & Fob Register" sub="Every access device in the building, what each unit is entitled to, and the annual audit"
+      action={canEdit && tab === "register" ? <HeaderAction onClick={() => setAdding(true)} data-guide="keyfob-add"><Plus size={16} /> Add</HeaderAction> : null} />
+    <Wrap>
       <div className="flex gap-2 flex-wrap">
-        {chip("s-all", fStatus === "all", "All " + counts.total, () => setFStatus("all"))}
-        {AI_STATUSES.map(([k, l]) => chip("s-" + k, fStatus === k, l + " " + (counts[k] || 0), () => setFStatus(k)))}
+        {tabBtn("register", "Register")}
+        {tabBtn("entitlements", "Entitlements")}
+        {tabBtn("audit", "Audit")}
+        {tabBtn("descriptors", "Descriptors")}
       </div>
-      <div className="grid sm:grid-cols-2 gap-3">
-        <Select value={fType} onChange={(e) => setFType(e.target.value)}><option value="all">All types</option>{AI_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
-        <Select value={fPurpose} onChange={(e) => setFPurpose(e.target.value)}><option value="all">All purposes</option>{AI_PURPOSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
-      </div>
-
-      {busy
-        ? <Card style={{ padding: 24 }}><div className="text-sm" style={{ color: T.textMuted }}>Loading the register…</div></Card>
-        : shown.length === 0
-          ? <>
-              <Empty icon={KeyRound} title={all.length ? "Nothing matches that search" : "Nothing here yet"} hint={all.length ? "Try a unit number, a resident's name or a key number." : "Add a device, or upload the building manager's register as a CSV."} />
-              {filtering && <div className="text-center"><Btn kind="ghost" onClick={clearAll}>Clear the search</Btn></div>}
-            </>
-          : <>{shown.map(row)}{shown.length < all.length && <div className="text-xs text-center pt-1" style={{ color: T.textMuted }}>Showing {shown.length} of {all.length}</div>}</>}
+      {tab === "register" && registerView()}
+      {tab === "entitlements" && entView()}
+      {tab === "audit" && auditView()}
+      {tab === "descriptors" && descView()}
     </Wrap>
   </div>);
 }

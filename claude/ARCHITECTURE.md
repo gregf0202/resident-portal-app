@@ -2,13 +2,14 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-18 · App version: v0.33.1 (Back in the body of every screen;
-> party list gained Resident tenant and Building manager). Nothing pending.
-> Earlier: v0.31.3 Add to Home Screen steps for iOS 26 Compact layout; v0.31.1/v0.31.2
-> back-filled below.
-> Note: the copy of this file in the Claude Project knowledge lags this Drive master (it was
-> still at v0.25.0 on 5 Sep). Drive is the source of truth; read the version line in
-> `src/ResidentPortal.jsx` before stating a current version.
+> Last updated: 2026-09-19 · App version: v0.34.0 (Key & Fob Register: per-building
+> descriptor catalogue, unit entitlements, issued/on hand/suspended, signed receipts and
+> the Caretaker's annual audit). Nothing pending.
+> Note: this file lives in three places (repo `claude/`, the Drive folder, and Claude
+> Project knowledge) and all three are synced in the same session as any change, via the
+> `nalohub-doc-sync` skill. The repo copy is the working master. Whatever any header says,
+> the version line in `src/ResidentPortal.jsx` is the single source of truth for the
+> current release.
 >
 > _A synced copy of this doc lives in the NaloHub Claude Project so every new chat starts
 > with current context._
@@ -191,6 +192,11 @@ Finder; the paths in this file are what he needs to put each file in the right f
 
 - Project **NaloHub (prod):** ref `lipwcsihcxndwwgzhiia`, region `ap-southeast-2`.
 - Migrations applied to prod live in `supabase/migrations/`.
+- **Key register model (0019, 0020, APPLIED to prod 19 Sep 2026).** `access_descriptors`
+  (per-building catalogue, RLS `can_edit_unit_registry`), `unit_access_entitlements`,
+  `unit_access_items` + `descriptor_id` / `issued_to_role` / `owner_authority` /
+  `receipt_path` / `suspended_at`, statuses extended with `on_hand` and `suspended`, and
+  `access_audit(uuid)` SECURITY INVOKER.
 - **Parking permit unit number (migration 0018, APPLIED to prod 18 Sep 2026).** `issue_parking_permit()` previously derived `unit_number` FROM the
   `units` register via `applications.unit_id`; where that is null the permit issued with
   `unit_number NULL` and `permit-pdf` printed `UNIT#` followed by nothing. Not an edge case:
@@ -383,7 +389,11 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.33.1 (current, 18 Sep 2026):** Back is a button in the body of all 12 screens that have
+- **v0.34.0 (current, 19 Sep 2026):** Key & Fob Register becomes a register, an entitlement
+  record and an audit. Descriptors are per-building data (0019), each unit gets a static
+  entitlement per descriptor, devices carry issued / on hand / suspended plus who signed for
+  them and the signed receipt, and access_audit (0020) reconciles it. See changelog.
+- **v0.33.1 ( 18 Sep 2026):** Back is a button in the body of all 12 screens that have
   a back target, not only a chip on the header image that scrolls away, plus one at the foot of
   a thread. Party list gained Resident tenant and Building manager, Agent became Managing agent
   (migration 0017), and the list is ordered by frequency of dealing. See changelog.
@@ -465,6 +475,60 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.34.0 — the register becomes an auditable record (19 Sep 2026)
+
+`src/ResidentPortal.jsx` (KeyFobRegister rewritten as four tabs), `src/db.js` (14 new
+functions plus demo shims), migrations 0019 and 0020. Demo + production builds green;
+the four tabs driven in a real headless browser, and the audit arithmetic checked
+against live Curve data with a fixture that was reverted.
+
+**Requested by the Curve Birtinya BCC:** thirteen "descriptors", per-unit entitlement
+with issued and on hand, issuance to owner / managing agent / tenant with a signed
+receipt, lost items suspended and never deleted, and an annual Caretaker audit.
+
+- **Descriptors are per-building DATA, not a fixed list (0019).** Eight of the thirteen
+  differed only by fire-stair level, and two ("Building Key - Master", "- Service") were
+  the `purpose` axis from 0013 welded back into a string. A fixed list would have undone
+  0013, made Level 8 a schema migration, prevented asking "how many fire stairs keys are
+  out", and baked ONE building's floor plan into every building's schema, which matters
+  commercially. `access_descriptors` is per building; Curve's thirteen are seeded verbatim
+  so the committee sees its own words, and each descriptor still carries an item_type and
+  purpose so the filters and any cross-building reporting keep working.
+- **`unit_access_entitlements`**: the static per unit x descriptor number the whole audit
+  reconciles against. Settable one unit at a time or loaded in bulk from the committee's
+  own sheet; the bulk path reports what it could not match rather than skipping silently.
+- **Two new statuses.** `on_hand` is counted against a unit's entitlement but physically
+  held by the BM (the BCC's own example: entitlement 2, one issued, one on hand), or, when
+  `unit_id` is null, unallocated building stock. `suspended` replaces deleting: the BCC was
+  explicit that lost devices are suspended, never deleted, and stay recorded against the
+  unit or against stock. `lost` is kept for existing rows and still renders.
+- **Issuance.** `issued_to_role` (owner / managing agent / tenant / building manager /
+  contractor / other), `owner_authority` + `owner_authority_by` because a tenant receives
+  keys only on the owner's authority, and `receipt_path` for the signed copy in the private
+  attachments bucket. The framework the BCC asked to keep is intact: a device is still
+  issued TO THE UNIT, and the person is an attribute of the issuance.
+- **`access_audit(building)` (0020)** returns three scopes in one call so a single export
+  covers the exercise: `unit` (entitlement vs issued vs on hand vs suspended, with
+  variance), `stock` (unallocated, for the fob and remote count), and `unclassified`.
+  SECURITY INVOKER, so existing RLS decides visibility rather than a second access model.
+  The unit scope deliberately lists only pairs with an entitlement or a device; a plain
+  cross join would report 56 x 13 = 728 rows of nothing.
+- **Unclassified is never hidden.** All 230 Curve rows arrived in Aug 2026 as one
+  undifferentiated "Key or fob", so nothing says which is a Level 3 fire stairs key. Until
+  they are classified the reconciliation is incomplete, and the report says so on its face
+  rather than quietly omitting them. A CSV classify path (template + upload, matched on key
+  number) exists for when the BM confirms the mapping. **This is the critical path for the
+  BCC's request, and it is data entry, not software.**
+- **Tile honesty, again.** The first build counted every row with `variance != 0` as a
+  variance, so the demo read "28 variances" over a table showing "—" in all of them, because
+  a row with no entitlement has nothing to vary from. Variances now count only rows that
+  HAVE an entitlement, with "No entitlement set" as its own tile and its own notice. Same
+  rule as v0.32.1: a count beside a table must describe that table.
+- **Shadowing caught in review:** the audit rows were first held in a state variable named
+  `audit`, which shadows the `audit()` audit-log writer imported from `db.js` at the top of
+  the file. Renamed to `auditRows`. Nothing called it inside the component, so this was
+  latent rather than broken, but the next edit inside that function would have found it.
 
 ### v0.33.2 — Parking permits print their unit number (18 Sep 2026)
 
