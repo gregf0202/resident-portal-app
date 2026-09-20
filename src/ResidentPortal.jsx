@@ -28,7 +28,7 @@ import { audit, searchLegislation, loadDisputes, createDispute, appendDisputeEve
   listWalkItems, seedWalkDefaults, listWalks, createWalk, listWalkResults, setWalkResult, completeWalk,
   listNotifications, markNotificationRead, markAllNotificationsRead, listMotionComments, addMotionComment,
   addWalkItem, removeWalkItem, setWalkResultPhoto, setWalkResultMaint, mediaBlob, updateUnitAgent, amendMotionConditions, DEMO_UID, exportBuildingData,
-  listWalkSections, listFindings, listFindingEvents, raiseFinding, updateFinding, closeFinding, reopenFinding, observeFindingAgain, setWalkMeta, issueWalk,
+  listWalkSections, listFindings, listFindingEvents, raiseFinding, updateFinding, closeFinding, reopenFinding, observeFindingAgain, setWalkMeta, issueWalk, discardWalk,
   loadMyBuildingBilling, startPaymentSetup, getDocumentFile, getGalleryImages,
   listCorrThreads, getCorrThread, listCorrContacts, saveCorrContact, sendCorrespondence, sendAnnouncementEmail, ensureBuildingMailbox, updateCorrThread, setCorrThreadMembers, corrAttachmentUrl, listCorrUnfiled, fileCorrUnfiled, fileCorrUnfiledNewThread, searchCorrespondence } from "./db.js";
 import { supabase } from "./supabaseClient.js";
@@ -2937,6 +2937,19 @@ function provenanceLine(b) {
   if (nov) line += ` Handed to ${nov.to === "committee" ? "the Committee" : nov.to === "bm" ? "the Building Manager" : nov.toName || "a new funding party"} on ${fmtDateLong(nov.at)}.`;
   return line;
 }
+// "Wednesday 2nd September 2026". A walk is an event on a named day, and the
+// committee talks about it that way, so the record should too.
+const fmtWalkDate = (d) => {
+  try {
+    const x = new Date(String(d).slice(0, 10) + "T12:00:00");
+    const n = x.getDate();
+    const ord = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th";
+    const wd = x.toLocaleDateString("en-AU", { weekday: "long" });
+    const mo = x.toLocaleDateString("en-AU", { month: "long" });
+    return `${wd} ${n}${ord} ${mo} ${x.getFullYear()}`;
+  } catch (e) { return fmtDate(d); }
+};
+
 const fmtDateLong = (d) => { try { const x = new Date(String(d).slice(0, 10) + "T12:00:00"); return x.toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" }); } catch (e) { return fmtDate(d); } };
 function stampProvenance(bb, user, when) {
   if (!bb || (bb.provenance && bb.provenance.establishedAt)) return;
@@ -3433,6 +3446,9 @@ function printWalkReport({ walk, building, sections, findings, events, prevWalk,
   const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const dmy = (d) => (d ? new Date(d).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "");
   const now = new Date();
+  // One generation stamp, shown in the header and repeated on every page, so a
+  // printed copy can always be matched against another printed copy.
+  const stamp = now.toLocaleString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
   const wid = walk && walk.id;
   const F = findings || [];
   const P = photos || {};
@@ -3526,7 +3542,7 @@ function printWalkReport({ walk, building, sections, findings, events, prevWalk,
   const html = `<!doctype html><html><head><meta charset="utf-8">
   <title>Walk Through report - ${esc(building.name)} - ${esc(dmy(walk && walk.walk_date))}</title>
   <style>
-    @page { size: A4; margin: 13mm; }
+    @page { size: A4; margin: 13mm 13mm 18mm 13mm; }
     * { box-sizing: border-box; }
     body { font-family: "Sora", -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #25425E; margin: 0; font-size: 10px; line-height: 1.4; }
     .head { display: flex; align-items: center; gap: 12px; border-bottom: 3px solid #60A0B4; padding-bottom: 9px; }
@@ -3561,11 +3577,18 @@ function printWalkReport({ walk, building, sections, findings, events, prevWalk,
     .banner { border-left: 4px solid #a33; background: #fdf3f3; padding: 7px 10px; margin: 7px 0; font-size: 9.5px; }
     .keytab td { font-size: 8.5px; } .keytab td:first-child { width: 22px; }
     .foot { margin-top: 13px; border-top: 1px solid #dbe6ee; padding-top: 7px; font-size: 8px; color: #5b7186; display: flex; justify-content: space-between; gap: 10px; }
+    /* position:fixed repeats on every printed page, which is the only reliable
+       way to get a running footer out of a browser. Two people in a meeting can
+       then check they are holding the same generation. */
+    .pagefoot { position: fixed; left: 0; right: 0; bottom: 0; background: #fff;
+                border-top: 1px solid #dbe6ee; padding-top: 4px; font-size: 7.5px;
+                color: #5b7186; display: flex; justify-content: space-between; gap: 10px; }
+    body { padding-bottom: 8mm; }
   </style></head><body>
   <div class="head">
     <img class="logo" alt="NaloHub" src="/NaloHub-Logo.png" onerror="this.style.display='none';var w=document.getElementById('wm');if(w)w.style.display='block'"/>
     <div class="word" id="wm" style="display:none">Nal<i>o</i>Hub</div>
-    <div class="meta">Generated from the NaloHub register<br/>${esc(now.toLocaleString("en-AU"))}</div>
+    <div class="meta">Generated from the NaloHub register<br/>${esc(stamp)}</div>
   </div>
 
   <h1>Building Walk Through</h1>
@@ -3643,6 +3666,11 @@ function printWalkReport({ walk, building, sections, findings, events, prevWalk,
   <div class="foot">
     <div>Prepared from the NaloHub Walk Through register. Every entry is backed by the in-app trail: who, what, when. Suitable for tabling in committee meeting minutes.</div>
     <div>Be in the Nalo.</div>
+  </div>
+
+  <div class="pagefoot">
+    <div>${esc(building.name)} · Walk Through · Walk of ${esc(dmy(walk && walk.walk_date))}</div>
+    <div>Generated ${esc(stamp)} · NaloHub</div>
   </div>
   <script>window.onload = () => setTimeout(() => window.print(), 400);<\/script>
   </body></html>`;
@@ -4316,8 +4344,15 @@ function ContractorsLive() {
 // One finding, in full: the duty it tests, what was asked for, and every event
 // against it with its photograph. This is the screen that answers "what actually
 // happened with CB-0072", which a number on a tile never could.
-function FindingDrawer({ finding: f, events, onClose }) {
+function FindingDrawer({ finding: f, events, onClose, canClose, onAct, inWalk }) {
   const { T } = useApp();
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const act = async (kind) => {
+    setBusy(true);
+    try { await onAct(kind, f, note); setNote(""); }
+    finally { setBusy(false); }
+  };
   const [urls, setUrls] = useState({});
   const evs = (events || []).filter((e) => e.finding_id === f.id)
     .sort((a, b) => (a.occurred_at < b.occurred_at ? -1 : 1));
@@ -4382,6 +4417,22 @@ function FindingDrawer({ finding: f, events, onClose }) {
               </div>
             </div>))}
           <div className="text-[11px] mt-3" style={{ color: T.textMuted }}>This trail is append-only. Entries cannot be edited or removed once recorded.</div>
+
+          {f.status === "open" && onAct && (<div className="mt-4 rounded-xl p-3" style={{ background: T.surfaceAlt, border: `1px solid ${T.border}` }}>
+            <div className="text-xs font-semibold mb-1.5">Update this finding</div>
+            <div className="text-[11px] mb-2" style={{ color: T.textMuted }}>
+              {inWalk ? "Recorded against the walk you have open." : "Recorded against the register, not a walk. Use this when something is confirmed done between walks."}
+            </div>
+            <Input placeholder="How was this confirmed? (optional but worth it)" value={note} onChange={(e) => setNote(e.target.value)} />
+            <div className="flex gap-2 mt-2 flex-wrap">
+              <Btn kind="ghost" disabled={busy} onClick={() => act("still")}>Still present</Btn>
+              {canClose && <Btn grad disabled={busy} onClick={() => act("close")}><Check size={14} /> Confirm done and close</Btn>}
+            </div>
+            {!canClose && <div className="text-[11px] mt-2" style={{ color: T.textMuted }}>Only the committee can close a finding at this building.</div>}
+          </div>)}
+          {f.status === "closed" && onAct && canClose && (<div className="mt-4">
+            <Btn kind="ghost" onClick={() => act("reopen")}>Reopen this finding</Btn>
+          </div>)}
         </div>
       </div>
     </div>
@@ -4396,12 +4447,16 @@ function WalkthroughLive() {
   const [walkId, setWalkId] = useState(null); const [results, setResults] = useState({});
   const [notes, setNotes] = useState({}); const [photos, setPhotos] = useState({});
   const [maintSent, setMaintSent] = useState({});
-  const staff = (store.users || []).filter((m) => m.buildingId === buildingId && ["bcc", "admin", "manager"].includes(m.role) && m.status === "active");
+  // The platform Admin account is not a walk attendee: it is how NaloHub reaches a
+  // building, not a person who walks it. Committee members already hold the bcc role.
+  const staff = (store.users || []).filter((m) => m.buildingId === buildingId && ["bcc", "manager"].includes(m.role) && m.status === "active");
   const residents = (store.users || []).filter((m) => m.buildingId === buildingId && ["owner", "tenant"].includes(m.role) && m.status === "active");
   const [att, setAtt] = useState(null); // { sel: {id:true}, resPick, extName, extOrg }
-  const attState = att || { sel: Object.fromEntries(staff.map((m) => [m.id, true])), resPick: "", extName: "", extOrg: "" };
+  // Nobody is pre-ticked. An attendee list that fills itself in produces walks
+// that record people who were never there, which is worse than no list at all.
+  const attState = att || { sel: {}, resPick: "", extName: "", extOrg: "" };
   const setAttState = (patch) => setAtt({ ...attState, ...patch });
-  const roleTag = (m) => (m.role === "manager" ? "BM" : m.role === "tenant" ? "Resident" : m.role === "owner" ? "Resident" : "BCC");
+  const roleTag = (m) => (m.role === "manager" ? "BM" : m.role === "admin" ? "Admin" : m.role === "tenant" ? "Resident" : m.role === "owner" ? "Resident" : "BCC");
   const composeAttendees = () => {
     const names = (store.users || []).filter((m) => attState.sel[m.id]).map((m) => `${m.name} (${roleTag(m)})`);
     if (attState.extName.trim()) names.push(`${attState.extName.trim()}${attState.extOrg.trim() ? ` (${attState.extOrg.trim()})` : " (external)"}`);
@@ -4474,6 +4529,28 @@ function WalkthroughLive() {
     try { const up = await uploadMedia(buildingId, "walkthrough", file); setDraft((d) => ({ ...d, photoPath: up.path })); flash("Photo attached"); }
     catch (e) { flash(String(e.message || e)); }
   };
+  // The drawer can act on a finding whether or not a walk is open. Closing
+  // between walks is a real thing that happens, and forcing someone to start a
+  // walk just to record it is what produced phantom walks in the first place.
+  const actOnFinding = async (kind, f, note) => {
+    const w = walkId || null;
+    try {
+      if (kind === "still") {
+        await observeFindingAgain(f.id, w, note || (w ? "Still present at this walk" : "Still present, confirmed between walks"), fPhoto[f.id] || null);
+        flash(`${f.ref} recorded as still present`);
+      } else if (kind === "close") {
+        await closeFinding(buildingId, f.id, w, note || (w ? "Verified at the walk" : "Confirmed done between walks"), fPhoto[f.id] || null);
+        flash(`${f.ref} closed and verified`);
+      } else if (kind === "reopen") {
+        await reopenFinding(buildingId, f.id, w, note || "Reopened");
+        flash(`${f.ref} reopened`);
+      }
+      setFPhoto((m) => { const n = { ...m }; delete n[f.id]; return n; });
+      const fresh = await listFindings(buildingId);
+      setFindings(fresh); setFEvents(await listFindingEvents(buildingId));
+      setDetail(fresh.find((x) => x.id === f.id) || null);
+    } catch (e) { flash(String(e.message || e).replace(/^.*committee verification.*$/i, "Only the committee can close a finding at this building.")); }
+  };
   const stillThere = async (f) => {
     try {
       await observeFindingAgain(f.id, walkId, "Still present at this walk", fPhoto[f.id] || null);
@@ -4494,7 +4571,21 @@ function WalkthroughLive() {
   };
   useEffect(() => { reload(); loadRegister(); }, [buildingId]);
   const start = async () => {
-    try { const id = await createWalk(buildingId, composeAttendees() || user.name); setWalkId(id); setResults({}); setNotes({}); setPhotos({}); setMaintSent({}); reload(); }
+    const openOne = walks.find((w) => w.status === "in_progress");
+    if (openOne) {
+      const same = String(openOne.walk_date) === today();
+      if (!window.confirm(`There is already a walk ${same ? "started today" : "in progress from " + fmtWalkDate(openOne.walk_date)} that has not been issued.\n\nOK to continue that one instead.\nCancel to start a second walk anyway.`)) {
+        return openWalk(openOne);
+      }
+    }
+    if (!Object.values(attState.sel).some(Boolean) && !attState.extName.trim()
+        && !window.confirm("No attendees selected. Record the walk with nobody listed?")) return;
+    try { const id = await createWalk(buildingId, composeAttendees() || user.name); setWalkId(id); setResults({}); setNotes({}); setPhotos({}); setMaintSent({}); setAtt(null); reload(); }
+    catch (e) { flash(String(e.message || e)); }
+  };
+  const discard = async (w) => {
+    if (!window.confirm(`Discard the walk of ${fmtWalkDate(w.walk_date)}?\n\nThis removes it from the record entirely. Only possible while nothing has been recorded against it.`)) return;
+    try { await discardWalk(buildingId, w.id); if (walkId === w.id) setWalkId(null); await reload(); flash("Walk discarded"); }
     catch (e) { flash(String(e.message || e)); }
   };
   const openWalk = async (w) => {
@@ -4579,6 +4670,7 @@ function WalkthroughLive() {
         new DocxP({ spacing: { after: 40 }, children: [wT("NaloHub", { bold: true, size: 26, color: NAVY }), wT("   Building Walk Through", { size: 26, color: GREY })] }),
         new DocxP({ spacing: { after: 160 }, border: { bottom: { style: DocxB.SINGLE, size: 12, color: TEAL } },
           children: [wT(`${building.name}${building.address ? " · " + building.address : ""} · Walk of ${dmy(w.walk_date)}`, { size: 18, color: GREY })] }),
+        wP(`Generated ${new Date().toLocaleString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })}`, { color: GREY, size: 14, after: 120 }),
         wP(`${closedHere.length} closed at this walk  ·  ${only(newHere).length} raised  ·  ${carriedHere.length} carried  ·  ${F.filter((x) => x.overdue).length} overdue  ·  ${byC("H").length} open hazards`, { bold: true, after: 140 }),
       ];
       if (byC("H").length) K.push(wP(`${byC("H").length} workplace health and safety hazard${byC("H").length === 1 ? "" : "s"} open. See Part 5.`, { bold: true, color: "AA3333", after: 140 }));
@@ -4728,8 +4820,14 @@ function WalkthroughLive() {
                   </button>))}
               </div>
               {tile && (<div className="mt-3">
-                <div className="text-xs font-semibold mb-1.5" style={{ color: T.textMuted }}>
-                  {tile === "open" ? "Every open finding" : tile === "hazard" ? "Safety hazards" : tile === "overdue" ? "Past their due date" : "Open at three or more walks"}
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="text-xs font-semibold" style={{ color: T.textMuted }}>
+                    {tile === "open" ? "Every open finding" : tile === "hazard" ? "Safety hazards" : tile === "overdue" ? "Past their due date" : "Open at three or more walks"}
+                  </div>
+                  <div className="flex-1" />
+                  <button onClick={() => setTile(null)} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded-lg" style={{ color: T.accent, background: hexToRgba(T.accent, 0.1) }}>
+                    <X size={12} /> Close
+                  </button>
                 </div>
                 {(tile === "open" ? openF : tile === "hazard" ? hazardF : tile === "overdue" ? overdueF : recurF)
                   .sort((a, b) => (b.walks_open || 0) - (a.walks_open || 0))
@@ -4750,14 +4848,14 @@ function WalkthroughLive() {
           </>)}
           <SectionTitle>Past walks</SectionTitle>
           {walks.length === 0 && <Empty icon={ClipboardList} title="No walks recorded yet" />}
-          {walks.map((w) => (<Card key={w.id} style={{ padding: 14 }}><div className="flex items-center gap-3 flex-wrap"><div className="flex-1 min-w-[160px]"><div className="font-semibold text-sm">{fmtDate(w.walk_date)}</div><div className="text-xs" style={{ color: T.textMuted }}>{w.attendees || ""}{w.summary ? ` · ${w.summary}` : ""}</div></div><Badge color={w.issued_at ? SEMANTIC.ok : w.status === "completed" ? T.accent : SEMANTIC.warn}>{w.issued_at ? "issued" : w.status.replace(/_/g, " ")}</Badge><Btn kind="ghost" onClick={() => report(w)} title="Full report with photo evidence and the recurrence schedule"><Printer size={13} /> {reporting ? "Building..." : "Report"}</Btn><Btn kind="ghost" onClick={() => exportWalk(w)}><Download size={13} /> Word</Btn>{w.status === "in_progress" && <Btn kind="ghost" onClick={() => openWalk(w)} title="Reopen this unfinished walk and carry on from where it stopped">Continue this walk</Btn>}</div></Card>))}
+          {walks.map((w) => (<Card key={w.id} style={{ padding: 14 }}><div className="flex items-center gap-3 flex-wrap"><div className="flex-1 min-w-[160px]"><div className="font-semibold text-sm">{fmtWalkDate(w.walk_date)}</div><div className="text-xs" style={{ color: T.textMuted }}>{w.attendees || ""}{w.summary ? ` · ${w.summary}` : ""}</div></div><Badge color={w.issued_at ? SEMANTIC.ok : w.status === "completed" ? T.accent : SEMANTIC.warn}>{w.issued_at ? "issued" : w.status.replace(/_/g, " ")}</Badge><Btn kind="ghost" onClick={() => report(w)} title="Opens the report, then use Save as PDF in the print dialog"><Printer size={13} /> {reporting ? "Building..." : "Export PDF"}</Btn><Btn kind="ghost" onClick={() => exportWalk(w)} title="Downloads a Word file straight away"><Download size={13} /> Export Word</Btn>{w.status === "in_progress" && <><Btn kind="ghost" onClick={() => openWalk(w)} title="Reopen this unfinished walk and carry on from where it stopped">Continue this walk</Btn><Btn kind="ghost" onClick={() => discard(w)} title="Remove a walk that was opened but never walked"><Trash2 size={13} /></Btn></>}</div></Card>))}
         </>)}
         {walkId && (<>
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div className="px-5 py-3.5" style={{ background: `linear-gradient(135deg, ${hexToRgba(T.accent, 0.16)}, ${hexToRgba(T.accent2, 0.08)})` }}>
               <div className="text-[10px] uppercase tracking-[0.2em] font-bold" style={{ color: T.accent }}>NaloHub · Building Walk-Through</div>
               <div className="font-bold mt-0.5">{building.name}</div>
-              <div className="text-xs" style={{ color: T.textMuted }}>{building.address}{current ? ` · ${fmtDate(current.walk_date)}` : ""}</div>
+              <div className="text-xs" style={{ color: T.textMuted }}>{building.address}{current ? ` · ${fmtWalkDate(current.walk_date)}` : ""}</div>
               {current && current.attendees && <div className="text-xs mt-1" style={{ color: T.textMuted }}>Attending: {current.attendees}</div>}
             </div>
           </Card>
@@ -4861,11 +4959,13 @@ function WalkthroughLive() {
             <Field label="Areas not walked, and why"><Input placeholder="Leave blank if every group was inspected" onBlur={(e) => setWalkMeta(walkId, { areas_not_walked: e.target.value || null }).catch(() => {})} /></Field>
             <div className="flex gap-2 mt-2 flex-wrap">
               <Btn grad onClick={async () => { try { await issueWalk(buildingId, walkId, `${carriedF(walkId).length} carried · ${findings.filter((f) => f.first_raised_walk_id === walkId).length} raised`); await reload(); await loadRegister(); flash("Walk issued"); } catch (e) { flash(String(e.message || e)); } }}><Check size={15} /> Issue this walk</Btn>
-              <Btn kind="ghost" onClick={() => report(current)}><Printer size={14} /> {reporting ? "Building..." : "Report"}</Btn>
+              <Btn kind="ghost" onClick={() => report(current)}><Printer size={14} /> {reporting ? "Building..." : "Export PDF"}</Btn>
+              <Btn kind="ghost" onClick={() => exportWalk(current)}><Download size={14} /> Export Word</Btn>
             </div>
           </Card>
         </>)}
-        {detail && <FindingDrawer finding={detail} events={fEvents} onClose={() => setDetail(null)} />}
+        {detail && <FindingDrawer finding={detail} events={fEvents} inWalk={!!walkId}
+          canClose={isCttee} onAct={actOnFinding} onClose={() => setDetail(null)} />}
       </Wrap>
     </div>
   );

@@ -2,9 +2,10 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-19 · App version: v0.34.0 (Key & Fob Register: per-building
-> descriptor catalogue, unit entitlements, issued/on hand/suspended, signed receipts and
-> the Caretaker's annual audit). Nothing pending.
+> Last updated: 2026-09-20 · App version: v0.35.0 (Building Walk Through rebuilt for
+> Curve Birtinya: a 13-section, 176-question checklist bound to the Caretaking and Letting
+> Agreement, a persistent append-only findings register with before/after photo evidence,
+> and a branded PDF and Word report). Nothing pending.
 > Note: this file lives in three places (repo `claude/`, the Drive folder, and Claude
 > Project knowledge) and all three are synced in the same session as any change, via the
 > `nalohub-doc-sync` skill. The repo copy is the working master. Whatever any header says,
@@ -389,7 +390,13 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.34.0 (current, 19 Sep 2026):** Key & Fob Register becomes a register, an entitlement
+- **v0.35.0 (current, 20 Sep 2026):** The Building Walk Through becomes a register rather
+  than a checklist. 13 sections and 176 questions seeded from Schedule 1 of Curve's
+  Caretaking and Letting Agreement (0022), an append-only `walkthrough_findings` register
+  with a six-class finding scheme and committee-verified closure (0021), and three
+  historical walks with 90 findings ingested (0023a/0023b). Report exports to branded PDF
+  and Word with paired before/after thumbnails. See changelog.
+- **v0.34.0 (19 Sep 2026):** Key & Fob Register becomes a register, an entitlement
   record and an audit. Descriptors are per-building data (0019), each unit gets a static
   entitlement per descriptor, devices carry issued / on hand / suspended plus who signed for
   them and the signed receipt, and access_audit (0020) reconciles it. See changelog.
@@ -475,6 +482,61 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.35.0: the Walk Through becomes a register (20 Sep 2026)
+
+`src/ResidentPortal.jsx` (WalkthroughLive rewritten, FindingDrawer, printWalkReport,
+exportWalk), `src/db.js` (11 new functions plus demo shims),
+`src/components/PlatformConsole.jsx` (version footer), migrations 0021, 0022, 0023a and
+0023b. Demo and production builds green.
+
+**Why.** `walkthrough_results` is keyed `(walkthrough_id, item_id)`, so an issue found on
+one walk could only ever exist as free text in that walk's `note`. Nothing carried to the
+next walk, which is where roughly 90% of the record was being lost. The August and
+September Curve walkaround reports showed the same items recurring with no way to prove
+recurrence.
+
+- **`walkthrough_findings` (0021)** is the persistent, append-only register. Each finding
+  carries a reference (CB-0001), a class, the duty it tests, and a chain of
+  `walkthrough_finding_events` recording every observation, photo and closure. Closing a
+  finding requires committee verification per building (`walkthrough_closure` setting,
+  default `committee`), enforced by a trigger, not by hiding a button.
+- **Six finding classes.** S Standard (duty not met at contracted frequency) · R
+  Rectification · C Contracted works · H Hazard · L Lot owner/by-law · G Governance. A
+  constraint forbids an S-class finding from ever carrying a `maintenance_id`: standard
+  shortfalls must not enter the Maintenance Workflow, because they would distort the
+  average-days-to-resolve and open-now figures that the maintenance record exists to
+  defend.
+- **Sections seeded from the agreement (0022).** 176 questions, each citing its Schedule 1
+  line and contracted frequency; 24 rest only on cl 3.2/3.4 and say so. The generic 22
+  items are retired by `active = false`, never deleted, so historical walks still read.
+- **Evidence (0023a/0023b).** Three historical walks (30 Jun, 5 Aug, 2 Sep) and 90
+  findings with 140 events. Reports render before/after photo pairs at 240px q0.72
+  (12 to 18 KB each) so a report stays emailable, with full-resolution images kept in the
+  app.
+- **Reports.** `printWalkReport` renders A4 with the NaloHub logo, a running footer on
+  every page carrying the building, walk date and generation stamp, and `exportWalk`
+  produces a Word file from the same data and the same stamp. Both buttons now read
+  "Export PDF" and "Export Word".
+- **Findings can be closed between walks.** `actOnFinding` records "still present" or
+  "confirmed done and closed" against the register rather than a walk, with copy that
+  says which, so the committee is not forced to open a phantom walk to close an item.
+- **The Admin account is not an attendee.** Curve carried three membership rows all named
+  "Platform Admin", and the attendee list printed each of them as "(BCC)". Neither was a
+  duplication bug: `joinAsAdmin` and `createBuilding` hard-coded the name `Platform Admin`
+  on every membership they minted, so each platform admin who opened Curve from the
+  Platform Console left an identically named row behind, and `roleTag` fell through to
+  "BCC" for any role it did not recognise. An attendee list on a body corporate document
+  that assigns the wrong office to three people is a defensible-record problem, not a
+  cosmetic one. The `admin` role is now excluded from the attendee picker entirely (it is
+  how NaloHub reaches a building, not a person who walks it), `roleTag` labels it "Admin"
+  wherever it still appears, and both functions now write the name `Admin`. The two
+  surplus Curve rows were deleted and the naloit@nalohub.com rows renamed across all
+  twelve buildings; `is_platform_admin` lives on `profiles`, so no access changed.
+- **The four exploratory walks were cleared.** 4 Sep, 5 Sep and two dated 19 Sep, created
+  by committee members and the Admin account while finding their way around the old
+  screen. Five bare results between them, no notes and no photos. Deleted with the
+  register untouched, because nothing in `walkthrough_findings` referenced them.
 
 ### v0.34.0 — the register becomes an auditable record (19 Sep 2026)
 

@@ -161,7 +161,7 @@ export async function createBuilding(fields, authUser) {
   const bid = ins.id;
   const { error: e2 } = await supabase.from("memberships").insert({
     building_id: bid, user_id: authUser.id, email: authUser.email,
-    full_name: "Platform Admin", role: "admin", status: "active",
+    full_name: "Admin", role: "admin", status: "active",
   });
   if (e2) throw e2;
   audit(bid, "building.created", fields.name);
@@ -171,7 +171,7 @@ export async function createBuilding(fields, authUser) {
 export async function joinAsAdmin(bid, authUser) {
   const { error } = await supabase.from("memberships").insert({
     building_id: bid, user_id: authUser.id, email: authUser.email,
-    full_name: "Platform Admin", role: "admin", status: "active",
+    full_name: "Admin", role: "admin", status: "active",
   });
   if (error && !String(error.message || "").includes("duplicate")) throw error;
 }
@@ -1284,6 +1284,23 @@ export async function observeFindingAgain(findingId, walkId, note, photoPath) {
   if (error) throw error;
 }
 
+// A walk that was opened and never walked is noise in the record, so it can be
+// discarded, but only while it is genuinely empty: nothing raised against it, no
+// questions answered, no events pointing at it. Anything else stays.
+export async function discardWalk(bid, walkId) {
+  const [f, r, e] = await Promise.all([
+    supabase.from("walkthrough_findings").select("id", { count: "exact", head: true })
+      .or(`first_raised_walk_id.eq.${walkId},closed_walk_id.eq.${walkId}`),
+    supabase.from("walkthrough_results").select("id", { count: "exact", head: true }).eq("walkthrough_id", walkId),
+    supabase.from("walkthrough_finding_events").select("id", { count: "exact", head: true }).eq("walkthrough_id", walkId),
+  ]);
+  const total = (f.count || 0) + (r.count || 0) + (e.count || 0);
+  if (total > 0) throw new Error(`This walk has ${total} record${total === 1 ? "" : "s"} against it, so it cannot be discarded. Issue it instead.`);
+  const { error } = await supabase.from("walkthroughs").delete().eq("id", walkId);
+  if (error) throw error;
+  audit(bid, "walkthrough.discarded", walkId);
+}
+
 export async function setWalkMeta(walkId, patch) {
   const { error } = await supabase.from("walkthroughs").update(patch).eq("id", walkId);
   if (error) throw error;
@@ -2214,6 +2231,7 @@ if (DEMO_MODE) {
     const f = (DS.findings || []).find((x) => x.id === fid); if (f) f.walks_open = (f.walks_open || 1) + 1;
     (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, walkthrough_id: wid || null, event: "observed_again", note: note || null, photo_path: photoPath || null, occurred_at: now() });
   };
+  discardWalk = async (_b, wid) => { const i = DS.walks.findIndex((x) => x.id === wid); if (i >= 0) DS.walks.splice(i, 1); };
   setWalkMeta = async (wid, patch) => { const w = DS.walks.find((x) => x.id === wid); if (w) Object.assign(w, patch); };
   issueWalk = async (_b, wid, summary) => { const w = DS.walks.find((x) => x.id === wid); if (w) { w.status = "completed"; w.summary = summary; w.issued_at = now(); } };
   listNotifications = async () => [...DS.notifications];
