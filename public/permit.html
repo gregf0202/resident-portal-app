@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Permit check · NaloHub</title>
+<style>
+  body{margin:0;background:#0B1F3A;font-family:Calibri,Carlito,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;color:#1A2733}
+  .wrap{max-width:440px;margin:0 auto;padding:28px 16px 40px}
+  .card{background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+  .head{background:#0B1F3A;color:#fff;padding:18px 22px 16px}
+  .head small{display:block;letter-spacing:.12em;font-size:11px;color:#B8C4CE;font-weight:700}
+  .head h1{margin:6px 0 0;font-size:26px}
+  .body{padding:20px 22px 22px}
+  .no{font:700 40px/1 Cambria,Caladea,Georgia,serif;color:#1FA6A6;margin:2px 0 14px}
+  .badge{display:inline-block;padding:6px 12px;border-radius:999px;font-weight:700;font-size:13px}
+  .ok{background:#E8F5EE;color:#1F7A4C}.warn{background:#FDF3E7;color:#B45309}.bad{background:#FDECEC;color:#B42318}
+  .row{display:flex;gap:16px;margin-top:14px}.row div{flex:1}
+  label{display:block;font-size:11px;letter-spacing:.08em;color:#5C6670;font-weight:700}
+  .v{font-size:17px;font-weight:700;margin-top:3px}
+  .foot{margin-top:18px;padding-top:14px;border-top:1px solid #EEF4F6;color:#5C6670;font-size:12px}
+  .brand{text-align:center;color:#B8C4CE;font-size:12px;margin-top:18px}.brand b{color:#fff}
+  .muted{color:#5C6670}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="head"><small>PARKING PERMIT</small><h1>Checking…</h1></div>
+    <div class="body"><span class="muted">One moment.</span></div>
+  </div>
+  <div class="brand"><b>NaloHub</b> · Your Building, Your Records · nalohub.com</div>
+</div>
+<script>
+(async () => {
+  const FN = "https://lipwcsihcxndwwgzhiia.supabase.co/functions/v1/permit-verify";
+  const card = document.getElementById("card");
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const fmt = (d) => d ? new Date(d + "T12:00:00+10:00").toLocaleDateString("en-AU", { weekday:"short", day:"numeric", month:"short", year:"numeric", timeZone:"Australia/Brisbane" }) : "—";
+  const fail = (title, msg) => { card.innerHTML = `<div class="head"><small>PARKING PERMIT</small><h1>${esc(title)}</h1></div><div class="body"><span class="badge bad">${esc(msg)}</span><div class="foot">Scan the QR code on the permit itself. If you think this is an error, contact the building's committee.</div></div>`; };
+  const id = new URLSearchParams(location.search).get("id") || "";
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail("Permit check", "Not a valid permit link");
+  try {
+    const r = await fetch(`${FN}?id=${encodeURIComponent(id)}&fmt=json`, { cache: "no-store" });
+    const p = await r.json();
+    if (!r.ok || p.error) return fail("Permit check", r.status === 404 ? "No permit found" : "Could not check this permit");
+    const tone = p.status === "Current" ? "ok" : p.status === "Not yet started" ? "warn" : "bad";
+    document.title = `${p.permit_no} · ${p.building} · NaloHub`;
+    card.innerHTML = `<div class="head"><small>VISITOR PARKING PERMIT</small><h1>${esc(p.building)}</h1></div>
+      <div class="body"><div class="no">${esc(p.permit_no)}</div><span class="badge ${tone}">${esc(p.status)}</span>
+      <div class="row"><div><label>VALID FROM</label><div class="v">${fmt(p.valid_from)}</div></div><div><label>VALID TO</label><div class="v">${fmt(p.valid_to)}</div></div></div>
+      <div class="row"><div><label>APPROVED</label><div class="v">${fmt(p.approved)} by the Committee</div></div></div>
+      <div class="foot">Checked ${esc(p.checked)} AEST. This page shows validity only; the unit and vehicle are on the printed permit.</div></div>`;
+  } catch (e) { fail("Permit check", "Could not reach the record"); }
+})();
+</script>
+</body>
+</html>

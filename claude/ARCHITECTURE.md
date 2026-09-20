@@ -2,10 +2,11 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-20 · App version: v0.35.0 (Building Walk Through rebuilt for
-> Curve Birtinya: a 13-section, 176-question checklist bound to the Caretaking and Letting
-> Agreement, a persistent append-only findings register with before/after photo evidence,
-> and a branded PDF and Word report). Nothing pending.
+> Last updated: 2026-09-20 · App version: v0.35.1 (public parking-permit verify page +
+> `permit-verify` edge function; v0.35.0 rebuilt the Building Walk Through for Curve Birtinya
+> as a 13-section, 176-question checklist bound to the Caretaking and Letting Agreement, with
+> a persistent append-only findings register and branded PDF/Word reports). Pending: restyle
+> `permit-pdf` to the tent design in `claude/PARKING_PERMIT_TENT_SPEC.md`.
 > Note: this file lives in three places (repo `claude/`, the Drive folder, and Claude
 > Project knowledge) and all three are synced in the same session as any change, via the
 > `nalohub-doc-sync` skill. The repo copy is the working master. Whatever any header says,
@@ -265,7 +266,13 @@ Finder; the paths in this file are what he needs to put each file in the right f
   now routes to the building's inbox `<slug>@send.nalohub.com` so notice replies land in
   Correspondence, falling back to the committee email only if no mailbox exists), and
   **`ensure-mailbox`** (returns/creates a building's single clean public inbound address,
-  e.g. `seahaven@send.nalohub.com`; committee-only; `verify_jwt=true`).
+  e.g. `seahaven@send.nalohub.com`; committee-only; `verify_jwt=true`), and
+  **`permit-verify`** (deployed 20 Sep 2026, `verify_jwt=false`, public by design: a read-only
+  check of one parking permit by uuid, `?id=<uuid>&fmt=json`, returning permit number, building,
+  validity window and a Brisbane-date status, never unit/vehicle/rego; service role inside,
+  CORS open, called by `public/permit.html`). **The Supabase gateway serves function `text/html`
+  as `text/plain`** on `*.supabase.co` (verified in `function_edge_logs`), so any HTML a function
+  would render must instead be a static page on `portal.nalohub.com` that fetches JSON.
 - ⚠️ **The repo's `supabase/functions/` is not the full source of truth.** Production actually
   runs ~12 functions (also `send-email`, `inbound-email`, `ingest-legislation`, `nalo-answer`,
   `permit-pdf`, `proxy-form-pdf`, `stripe-billing`, `stripe-webhook`, `billing-cron`) that live
@@ -482,6 +489,24 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.35.1 — a permit can be verified from its QR (20 Sep 2026)
+
+- `public/permit.html` (new, static, no React): `portal.nalohub.com/permit.html?id=<permit uuid>`
+  fetches `permit-verify?id=…&fmt=json` and renders the branded verify card (navy header,
+  building name, permit number in teal serif, status badge, valid from/to, approval date,
+  checked-at). Invalid/unknown ids get a plain refusal. Vite copies `public/` to the site root,
+  so it deploys with the app on both portal and demo.
+- `permit-verify` edge function (v3, `verify_jwt=false`) — see §8. Exposes nothing that
+  identifies the resident; the printed card carries the unit and rego, the scan does not.
+- Why not HTML from the function: confirmed the gateway rewrites `text/html` to `text/plain`
+  (three deployments, `function_edge_logs` shows `text/plain` on every response). JSON + static
+  page is the pattern for any future public HTML.
+- Tent permit design agreed with Greg (A4, two A5 cards, top one rotated 180°, fold line):
+  navy header with the building name prominent and the NaloHub mark, QR top right, aerial
+  photo of the building feathered bottom right. Reference artwork and the `permit-pdf` restyle
+  spec are in `claude/PARKING_PERMIT_TENT_SPEC.md`; the existing `permit-pdf` (v8) already
+  prints two-up with a fold line in the old black/yellow template, so the restyle is layout only.
 
 ### v0.35.0: the Walk Through becomes a register (20 Sep 2026)
 
