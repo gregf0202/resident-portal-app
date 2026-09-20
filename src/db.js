@@ -159,8 +159,12 @@ export async function createBuilding(fields, authUser) {
   const { data: ins, error } = await supabase.from("buildings").insert({ data }).select("id").single();
   if (error) throw error;
   const bid = ins.id;
+  // The founder's admin row deliberately carries no email address. A platform admin is
+  // how NaloHub reaches a building, not a person who lives in it, and their personal
+  // contact details should never land in a building's member list. Who established the
+  // building is recorded separately, on the building record itself.
   const { error: e2 } = await supabase.from("memberships").insert({
-    building_id: bid, user_id: authUser.id, email: authUser.email,
+    building_id: bid, user_id: authUser.id, email: null,
     full_name: "Admin", role: "admin", status: "active",
   });
   if (e2) throw e2;
@@ -169,8 +173,17 @@ export async function createBuilding(fields, authUser) {
 }
 
 export async function joinAsAdmin(bid, authUser) {
+  // Opening a building from the Platform Console used to mint a membership carrying the
+  // admin's own email, so every admin who ever looked at a building left their personal
+  // address in it. The row now carries no email. Because UNIQUE (building_id, email)
+  // does not constrain NULLs, the duplicate check has to be explicit rather than left
+  // to the database, or every visit would add another Admin row.
+  const { data: existing, error: qe } = await supabase.from("memberships")
+    .select("id").eq("building_id", bid).eq("user_id", authUser.id).limit(1);
+  if (qe) throw qe;
+  if (existing && existing.length) return;
   const { error } = await supabase.from("memberships").insert({
-    building_id: bid, user_id: authUser.id, email: authUser.email,
+    building_id: bid, user_id: authUser.id, email: null,
     full_name: "Admin", role: "admin", status: "active",
   });
   if (error && !String(error.message || "").includes("duplicate")) throw error;

@@ -537,6 +537,20 @@ recurrence.
   by committee members and the Admin account while finding their way around the old
   screen. Five bare results between them, no notes and no photos. Deleted with the
   register untouched, because nothing in `walkthrough_findings` referenced them.
+- **A platform admin no longer leaves a personal email in a building.** `joinAsAdmin` and
+  `createBuilding` wrote `email: authUser.email`, so every admin who opened a building
+  from the Console put their own address into that building's member list, visible to its
+  committee. Both now write `email: null` with the name `Admin`, because the row exists so
+  the app knows who is acting, not so the building can contact them. `UNIQUE (building_id,
+  email)` does not constrain NULLs, so the duplicate check in `joinAsAdmin` is now an
+  explicit query on `(building_id, user_id)` rather than something left to the database;
+  without it every Console visit would add another Admin row. `memberToUser` already
+  tolerates a null email (`m.full_name || m.email || "Resident"`).
+- **Admin is one account.** `naloit@nalohub.com` holds the `admin` role across all twelve
+  buildings and is the only account that should. `gregf0202@gmail.com` held admin at Curve,
+  SeaHaven and Regatta; all three were removed, and at Curve it was replaced with an
+  `owner` membership for Unit 606, which is what the BM register has always said. Platform
+  reach comes from `profiles.is_platform_admin`, not from a membership, so nothing was lost.
 
 ### v0.34.0 — the register becomes an auditable record (19 Sep 2026)
 
