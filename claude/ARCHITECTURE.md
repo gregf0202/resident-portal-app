@@ -2,11 +2,11 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-20 · App version: v0.35.1 (public parking-permit verify page +
-> `permit-verify` edge function; v0.35.0 rebuilt the Building Walk Through for Curve Birtinya
+> Last updated: 2026-09-20 · App version: v0.35.2 (All requests filters + AGM pack export;
+> v0.35.1 public parking-permit verify page + `permit-verify` edge function; v0.35.0 rebuilt the Building Walk Through for Curve Birtinya
 > as a 13-section, 176-question checklist bound to the Caretaking and Letting Agreement, with
-> a persistent append-only findings register and branded PDF/Word reports). Pending: restyle
-> `permit-pdf` to the tent design in `claude/PARKING_PERMIT_TENT_SPEC.md`.
+> a persistent append-only findings register and branded PDF/Word reports). `permit-pdf` v9
+> (tent design) deployed 20 Sep; artwork it fetches lives in `public/`. Nothing pending.
 > Note: this file lives in three places (repo `claude/`, the Drive folder, and Claude
 > Project knowledge) and all three are synced in the same session as any change, via the
 > `nalohub-doc-sync` skill. The repo copy is the working master. Whatever any header says,
@@ -490,6 +490,26 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## Changelog
 
+### v0.35.2 — All requests can be filtered and exported for the AGM pack (20 Sep 2026)
+
+- `ApplicationsBookingsLive` "All requests" was a flat newest-first list. It now has: a search
+  box (unit number, resident name, rego, or words in the request), type chips (pet, lot
+  improvement, parking permit, keys, other, bookings), status chips with live counts
+  (awaiting / approved / declined / withdrawn), and — committee only — a **Decided by** filter
+  (BCC vote vs direct committee approval) and a **Submitted** range (3 m / 12 m / 3 y / all,
+  default 12 months). Filtering is split `base` (search + type + decided + date) → `shown`
+  (base + status chip); counts read from `base`, the rule the Key Register set in v0.32.1.
+- **Decided by** is derived, not stored: `execute_motion_outcome` (DB trigger) writes
+  `decision_note = 'Decided by BCC vote: …'` when a motion closes; anything else decided is a
+  direct committee approval via `decideApplication`. The demo shim writes the same prefix.
+- **Export for AGM pack** (committee, when the filtered list is non-empty): a branded Word
+  table — Date · Request · Unit · Decision · Status · Decided by — one row per request, with
+  the conditions of approval as a spanning row beneath the approval they bind, and a
+  subtitle naming the filters applied. Built on the existing `rptP/rptCell/RPT` report
+  helpers; file `Applications-<building>-<date>.docx`.
+- Each card in the list now names the type, the unit and how it was decided.
+- Version bump only in `src/ResidentPortal.jsx`; no migration, no edge function.
+
 ### v0.35.1 — a permit can be verified from its QR (20 Sep 2026)
 
 - `public/permit.html` (new, static, no React): `portal.nalohub.com/permit.html?id=<permit uuid>`
@@ -502,11 +522,18 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 - Why not HTML from the function: confirmed the gateway rewrites `text/html` to `text/plain`
   (three deployments, `function_edge_logs` shows `text/plain` on every response). JSON + static
   page is the pattern for any future public HTML.
-- Tent permit design agreed with Greg (A4, two A5 cards, top one rotated 180°, fold line):
-  navy header with the building name prominent and the NaloHub mark, QR top right, aerial
-  photo of the building feathered bottom right. Reference artwork and the `permit-pdf` restyle
-  spec are in `claude/PARKING_PERMIT_TENT_SPEC.md`; the existing `permit-pdf` (v8) already
-  prints two-up with a fold line in the old black/yellow template, so the restyle is layout only.
+- **`permit-pdf` v9 deployed** (source now in `supabase/functions/permit-pdf/index.ts`): the tent
+  design. A4, two identical A5 cards (top one rotated 180°), fold line; navy header with the
+  building name prominent and the NaloHub mark, QR to the verify page top right, the building's
+  aerial photo feathered bottom right, EXPIRED/REVOKED diagonal watermark when not current. Auth
+  and data flow unchanged from v8 (caller's JWT, RLS). pdf-lib rotation gotcha: `rotate: 180°`
+  turns about the anchor, so a rotated image is anchored at the design (x, y+h) point, the same
+  point that is the bottom-left for the upright card. Artwork is fetched at render time from
+  `public/permit-logo-light.png` and `public/permit-photo-curve.png` (Curve only, keyed on
+  building id) with a 4 s timeout and a no-image fallback, because inlining ~300 KB of base64 in
+  the function was not deployable through the MCP channel and `public/` already serves the
+  printable wordmark the same way. A per-building photo (`buildings.data.heroImage`) is the
+  obvious next step. Reference artwork and layout table: `claude/PARKING_PERMIT_TENT_SPEC.md`.
 
 ### v0.35.0: the Walk Through becomes a register (20 Sep 2026)
 

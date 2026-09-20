@@ -1,10 +1,10 @@
 # Parking permit tent card and live verify — spec and status
 
-**20 September 2026 · Replaces the black-and-yellow `permit-pdf` layout · Verify endpoint LIVE (v0.35.1)**
+**20 September 2026 · `permit-pdf` v9 (tent design) and `permit-verify` both LIVE (v0.35.1)**
 
 ## What exists today
 
-- **`permit-pdf` edge function (v8)** already prints two cards top-and-bottom on A4 with a FOLD HERE line, in the old black/yellow "Temporary Parking Permit" template. The tent format is therefore not new; the design is.
+- **`permit-pdf` edge function (v9, deployed 20 Sep)** prints the tent design below. Source: `supabase/functions/permit-pdf/index.ts`. It fetches `public/permit-logo-light.png` and, for Curve, `public/permit-photo-curve.png` from portal.nalohub.com at render time; if either is unreachable the permit prints without that image.
 - **`permit-verify` edge function (v3, deployed 20 Sep, `verify_jwt=false`)** — public, read-only. `GET /functions/v1/permit-verify?id=<permit uuid>&fmt=json` returns `{permit_no, building, status, valid_from, valid_to, approved, checked}`. Status is one of Current / Not yet started / Expired / Revoked / Not active, computed on Brisbane dates. It never returns unit, vehicle or rego, and it looks up by uuid so permit numbers cannot be enumerated (PP-0001 exists at both Curve and SeaHaven). CORS open. Tested live against Curve PP-0001. Source is kept in `supabase/functions/permit-verify/index.ts`.
 - **Why the page is not served by the function:** the Supabase gateway on `*.supabase.co` delivers a `text/html` response as `text/plain` (confirmed in `function_edge_logs`: the function emits `text/plain` even with the header set). So the function serves JSON and the page lives on our own domain.
 - **`public/permit.html`** (v0.35.1) — a static page in the Vite `public/` folder, served at `https://portal.nalohub.com/permit.html?id=<uuid>`. It fetches the JSON above and renders the branded card (navy header, permit number in teal serif, status badge, valid dates, approval, checked-at). Live once the v0.35.1 commit is pushed.
@@ -30,6 +30,6 @@
 
 Fold at y 148.5 (dashed, "fold here"). Each card 178 × 110.7 centred in its A5 half; top card rotated 180° about (105, 74.25). Footer at y 291: "Fold along the line and stand on the dash or console. Both sides show the same permit."
 
-## Still to do in `permit-pdf`
+## Still to do
 
-Replace the black/yellow drawing with this layout (pdf-lib: draw the navy header, embed the white logo PNG and the feathered building photo, draw the QR from a matrix). Keep the existing data flow, auth and filename. Add the `EXPIRED` diagonal watermark for non-current permits and the per-building `permit_layout` toggle (`tent` default, `single`). Reference artwork: `Curve_Parking_Permit_Tent_A4.png`.
+Per-building photo (`buildings.data.heroImage`, uploaded in Settings) so buildings other than Curve get their own picture. The `permit_layout` toggle is not built; every building gets the tent.
