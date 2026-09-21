@@ -1,5 +1,11 @@
 import { supabase } from "./supabaseClient.js";
 
+// Local calendar dates. toISOString() is UTC, which in Queensland is the previous day
+// until 10am, so it must never be used for a date a person will read (0.35.3, 0.35.4).
+const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const localDay = (v) => { if (!v) return ""; const t = String(v); if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t; const d = new Date(t.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00")); return isNaN(d.getTime()) ? t.substring(0, 10) : ymdLocal(d); };
+const localDate = () => ymdLocal(new Date());
+
 export const CONTENT = [
   "announcements", "maintenance", "assets", "bookings", "events", "gallery", "marketplace",
   "messages", "documents", "meetings", "actions", "keyfobs", "businesses",
@@ -331,7 +337,7 @@ export async function loadDisputes(bid) {
   const { data: evs } = await supabase.from("dispute_events").select("dispute_id, seq, data, created_at").eq("building_id", bid).order("seq");
   const byDispute = {};
   (evs || []).forEach((e) => { (byDispute[e.dispute_id] = byDispute[e.dispute_id] || []).push(disputeEventToApp(e)); });
-  return ds.map((d) => ({ id: d.id, buildingId: bid, ref: d.ref, openedAt: (d.created_at || "").slice(0, 10), ...(d.data || {}), events: byDispute[d.id] || [] }));
+  return ds.map((d) => ({ id: d.id, buildingId: bid, ref: d.ref, openedAt: localDay(d.created_at), ...(d.data || {}), events: byDispute[d.id] || [] }));
 }
 
 export async function createDispute(bid, title, byLabel, category, unitId) {
@@ -673,7 +679,7 @@ export async function suspendAccessItem(bid, id, reason) {
 }
 export async function updateAccessItemStatus(id, status) {
   const patch = { status };
-  if (status === "returned") patch.returned_at = new Date().toISOString().slice(0, 10);
+  if (status === "returned") patch.returned_at = localDate();
   const { error } = await supabase.from("unit_access_items").update(patch).eq("id", id);
   if (error) throw error;
 }
@@ -704,7 +710,7 @@ export async function updateUnitPerson(bid, id, patch) {
   audit(bid, "unit.person_updated", patch.full_name || id);
 }
 export async function moveOutUnitPerson(bid, id, moveOut) {
-  const { error } = await supabase.from("unit_people").update({ is_current: false, move_out: moveOut || new Date().toISOString().slice(0, 10) }).eq("id", id);
+  const { error } = await supabase.from("unit_people").update({ is_current: false, move_out: moveOut || localDate() }).eq("id", id);
   if (error) throw error;
   audit(bid, "unit.person_moved_out", id);
 }
@@ -717,7 +723,7 @@ export async function restoreUnitPerson(bid, id) {
 // owner or tenant replaces the last one rather than joining them.
 export async function moveOutUnitPeopleOfType(bid, unitId, personType, moveOut) {
   const { data, error } = await supabase.from("unit_people")
-    .update({ is_current: false, move_out: moveOut || new Date().toISOString().slice(0, 10) })
+    .update({ is_current: false, move_out: moveOut || localDate() })
     .eq("unit_id", unitId).eq("person_type", personType).eq("is_current", true).select("id");
   if (error) throw error;
   const n = (data || []).length;
@@ -1181,9 +1187,6 @@ export async function listWalks(bid) {
   if (error) throw error;
   return data || [];
 }
-// The device's own calendar date. toISOString() is UTC, which in Queensland is the
-// previous day until 10am, so it must never be used for a date a person will read.
-const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 export async function createWalk(bid, attendees) {
   const { data, error } = await supabase.from("walkthroughs").insert({ building_id: bid, attendees: attendees || null, walk_date: localDate() }).select("id").single();
@@ -1556,7 +1559,7 @@ export async function exportBuildingData(bid, buildingName, onProgress) {
   sheets.push(["Stored Files", fileRows]);
 
   const safe = (buildingName || "building").replace(/[^\w-]+/g, "-").toLowerCase();
-  downloadWorkbook(`nalohub-export-${safe}-${new Date().toISOString().slice(0, 10)}.xls`, sheets);
+  downloadWorkbook(`nalohub-export-${safe}-${localDate()}.xls`, sheets);
   audit(bid, "building.data_exported", `${sheets.length} sheets`);
   return { sheets: sheets.length, files: fileRows.length };
 }
@@ -1620,7 +1623,7 @@ if (DEMO_MODE) {
   const id = () => "d" + Math.random().toString(36).slice(2, 10);
   const now = () => new Date().toISOString();
   const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); };
-  const dAhead = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  const dAhead = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymdLocal(d); };
   const files = {}; // fake storage: path -> object URL
 
   const u12 = { id: "unit-12", unit_number: "12", lot_number: "Lot 12", parking_spaces: 2, agent_business: "Coastal Property Management", agent_contact: "Mia Chen", agent_phone: "07 5444 1200", agent_email: "mia@coastalpm.com.au", agent_note: "Lease ends 31 March. Contact agent for any entry or maintenance access.", notes: null };
@@ -2038,11 +2041,11 @@ if (DEMO_MODE) {
   // registry corrections, move-outs and removals — demo dataset
   updateUnit = async (_b, unitId, patch) => { const u = DS.units.find((x) => x.id === unitId); if (u) Object.assign(u, patch); };
   updateUnitPerson = async (_b, pid, patch) => { const x = DS.people.find((p) => p.id === pid); if (x) Object.assign(x, patch); };
-  moveOutUnitPerson = async (_b, pid, moveOut) => { const x = DS.people.find((p) => p.id === pid); if (x) { x.is_current = false; x.move_out = moveOut || new Date().toISOString().slice(0, 10); } };
+  moveOutUnitPerson = async (_b, pid, moveOut) => { const x = DS.people.find((p) => p.id === pid); if (x) { x.is_current = false; x.move_out = moveOut || localDate(); } };
   restoreUnitPerson = async (_b, pid) => { const x = DS.people.find((p) => p.id === pid); if (x) { x.is_current = true; x.move_out = null; } };
   moveOutUnitPeopleOfType = async (_b, unitId, personType, moveOut) => {
     const hit = DS.people.filter((p) => p.unit_id === unitId && p.person_type === personType && p.is_current !== false);
-    hit.forEach((p) => { p.is_current = false; p.move_out = moveOut || new Date().toISOString().slice(0, 10); });
+    hit.forEach((p) => { p.is_current = false; p.move_out = moveOut || localDate(); });
     return hit.length;
   };
   deleteUnitPerson = async (_b, pid) => { const i = DS.people.findIndex((p) => p.id === pid); if (i > -1) DS.people.splice(i, 1); };
@@ -2142,7 +2145,7 @@ if (DEMO_MODE) {
   decideApplication = async (_b, aid, approve, note) => {
     const a = DS.applications.find((x) => x.id === aid);
     if (a) { a.status = approve ? "approved" : "declined"; a.decided_at = now(); a.decision_note = note || null;
-      if (approve && a.category === "parking_permit") DS.permits.unshift({ id: id(), application_id: aid, permit_no: "PP-" + String(DS.permits.length + 8).padStart(4, "0"), unit_number: a.details.unit, vehicle_make: a.details.vehicle_make, vehicle_model: a.details.vehicle_model, vehicle_colour: a.details.vehicle_colour, vehicle_rego: a.details.vehicle_rego, date_from: a.details.date_from, date_to: a.details.date_to, approval_date: now().slice(0, 10), status: "active" });
+      if (approve && a.category === "parking_permit") DS.permits.unshift({ id: id(), application_id: aid, permit_no: "PP-" + String(DS.permits.length + 8).padStart(4, "0"), unit_number: a.details.unit, vehicle_make: a.details.vehicle_make, vehicle_model: a.details.vehicle_model, vehicle_colour: a.details.vehicle_colour, vehicle_rego: a.details.vehicle_rego, date_from: a.details.date_from, date_to: a.details.date_to, approval_date: localDate(), status: "active" });
     }
   };
   withdrawApplication = async (_b, aid) => { const a = DS.applications.find((x) => x.id === aid); if (a) a.status = "withdrawn"; };
@@ -2268,7 +2271,7 @@ if (DEMO_MODE) {
       ["Motions", DS.motions], ["Votes", DS.votes], ["Proxies", DS.proxies], ["Contracts", DS.contracts], ["Contractors", DS.contractors],
       ["Walkthroughs", DS.walks], ["Alerts", DS.notifications],
     ];
-    downloadWorkbook(`nalohub-export-demo-${now().slice(0, 10)}.xls`, sheets);
+    downloadWorkbook(`nalohub-export-demo-${localDate()}.xls`, sheets);
     return { sheets: sheets.length, files: 0 };
   };
 }

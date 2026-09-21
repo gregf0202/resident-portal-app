@@ -2,7 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-22 · App version: v0.35.3 (walk dates follow the local calendar, not UTC,
+> Last updated: 2026-09-22 · App version: v0.35.4 (every date a person reads is the local day:
+> `today_local()` in 0025, billing and permit functions rewritten onto it, `localDay()` in the app;
+> v0.35.3 walk dates follow the local calendar, not UTC,
 > via migration 0024 and `localDate()`; Complete walk replaced by Go to Finish so every walk ends issued;
 > v0.35.2 All requests filters + AGM pack export;
 > v0.35.1 public parking-permit verify page + `permit-verify` edge function; v0.35.0 rebuilt the Building Walk Through for Curve Birtinya
@@ -399,7 +401,11 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.35.3 (current, 22 Sep 2026):** Walk dates are local and every walk finishes issued.
+- **v0.35.4 (current, 22 Sep 2026):** The UTC date fault fixed everywhere, not just walks.
+  `today_local()` (0025) replaces `CURRENT_DATE` in five functions and three defaults, the
+  permit approval date stops casting `decided_at` in UTC, billing-cron and proxy-form-pdf
+  format in Brisbane, and 34 app call sites convert timestamps with `localDay()`. See changelog.
+- **v0.35.3 (22 Sep 2026):** Walk dates are local and every walk finishes issued.
   `walk_date` and `first_raised_on` defaulted to UTC `CURRENT_DATE`, so anything before 10am in
   Queensland was dated the day before; the app now sends the device date and 0024 makes the
   fallback Brisbane. Complete walk (which stranded walks unissued) became Go to Finish, and
@@ -497,6 +503,46 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## Changelog
 
+### v0.35.4: every date a person reads is the local day (22 Sep 2026)
+
+Migration `0025_local_dates`; edge functions `billing-cron` v9 and `proxy-form-pdf` v9 (both now
+in `supabase/functions/`, previously deployed-only); `src/ResidentPortal.jsx`, `src/db.js`,
+`src/components/BillingPanel.jsx`. Demo and production builds green; helpers unit-tested under
+`TZ=Australia/Brisbane` from the built source.
+
+**The rule, stated once.** Postgres `CURRENT_DATE` and `timestamptz::date`, the edge runtime, and
+`Date.prototype.toISOString()` are all UTC. Queensland is UTC+10 with no daylight saving, so
+anything derived from them reads as yesterday until 10:00. Use `public.today_local()` in SQL,
+`localDate()` / `localDay()` in db.js, `today()` / `localDay()` / `ymd()` in ResidentPortal.jsx,
+and `timeZone: "Australia/Brisbane"` in edge functions. Never slice a timestamp to 10 characters.
+
+- **Database (0025).** `today_local()` returns the Brisbane date. `billing_daily`,
+  `gen_building_invoice`, `create_adhoc_invoice`, `expire_lapsed_proxies` and
+  `issue_parking_permit` are rewritten in place by a DO block that replaces `current_date` and
+  fails if any function does not change. `issue_parking_permit` also cast `new.decided_at::date`,
+  which is the UTC date, so the permit's printed approval date was wrong independently of the
+  column default. Defaults for `invoices.issue_date`, `parking_permits.approval_date`,
+  `proxy_appointments.date_from`, and the two walk-through columns from 0024, now all read
+  `today_local()`. Verified: no function or default in `public` still uses `current_date`.
+- **Billing was a day behind every day.** pg_cron calls billing-cron at `0 20 * * *` UTC, which
+  is 06:00 AEST, so `current_date` inside `billing_daily` was always yesterday: invoice issue and
+  due dates, the preferred-payment-day match, trial reminders and expiry, and late fees. The
+  function's own `toISOString().slice(0, 10)` also meant auto invoices were charged a day late.
+  Transition risk checked before applying: all four billed buildings are in trial, all pay on
+  the 1st, no recurring invoice has ever been issued, so moving "today" forward cannot skip or
+  double an invoice.
+- **App.** `fmtDate()` already converted full timestamps correctly, but 34 callers sliced the
+  timestamp to 10 characters first, throwing the time away before it could convert. They now
+  call `localDay()`, which passes a plain `YYYY-MM-DD` through untouched and converts any
+  timestamp (ISO, space-separated, short `+00` offset) to the local day. `addDays()` parses
+  locally rather than through UTC. Affected: decision and submission dates, the AGM pack's
+  prepared-on date and file name, notifications, dispute and correspondence dates, key receipt
+  and issue dates, vote history, marketplace expiry, the maintenance report date filter, unit
+  move-out and key returned dates, the data export file name, and invoice paid dates in Billing.
+- **Not changed.** `billing-cron` and `inbound-email` both carry a shared secret in source,
+  checked against a `?secret=` query parameter with `verify_jwt=false`, so it also sits in the
+  pg_cron command and request logs. Move to `Deno.env` and rotate; logged as pending.
+
 ### v0.35.3: walk dates are local, and every walk ends issued (22 Sep 2026)
 
 `src/db.js` (`localDate()`, `createWalk`, `raiseFinding`, two demo shims),
@@ -512,9 +558,7 @@ large, they change most often, and a stale copy is actively dangerous — see ab
   fallback. Verified live at 06:48 Brisbane on 22 Sep: UTC date 21 Sep, new default 22 Sep.
   Device date rather than a fixed zone is deliberate: a building in Perth or Adelaide gets its own
   calendar day.
-- **Not changed, same bug:** `invoices.issue_date`, `parking_permits.approval_date` and
-  `proxy_appointments.date_from` still default to UTC `CURRENT_DATE`. Each prints on a document a
-  person reads, so each will show yesterday before 10am. Logged as pending in the Feature Register.
+- **Same bug elsewhere:** invoices, parking permits and proxies, fixed the same day in v0.35.4.
 - **One way to finish a walk.** Complete walk called `completeWalk()`, which set
   `status = 'completed'` without `issued_at`. Continue was offered only on `in_progress` walks, so a
   walk ended that way could never be reopened to issue, never entered the report's tracking table

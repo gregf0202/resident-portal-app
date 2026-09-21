@@ -5,7 +5,9 @@ import { loadTiers, updateTier, loadBuildingBilling, saveBuildingBilling, loadIn
 import { computeBilling, money, iso } from "../billing.js";
 import { downloadInvoicePdf } from "../invoicePdf.js";
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// Local calendar day, never the UTC slice (which is yesterday before 10am in Queensland).
+const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayISO = () => ymdLocal(new Date());
 const defaults = (tiers) => ({
   billing_model: "per_apartment", // EITHER "per_apartment" (automated engine) OR "tier" (designer, manual issue)
   pa_discount_pct: 0, pa_discount_reason: "", pa_discount_until: null,
@@ -20,7 +22,7 @@ const defaults = (tiers) => ({
   admin_monthly: 12.00, per_unit_monthly: 2.75, unit_count: 0, preferred_payment_day: 1,
   trial_days: null, trial_end: null, late_fee_amount: 0, suspend_on_expiry: true,
 });
-const au = (v) => { if (!v) return "—"; const d = String(v).slice(0, 10).split("-"); return d.length === 3 ? `${d[2]}/${d[1]}/${d[0]}` : String(v); };
+const au = (v) => { if (!v) return "—"; const t = String(v); const d = (/^\d{4}-\d{2}-\d{2}$/.test(t) || isNaN(new Date(t).getTime()) ? t.substring(0, 10) : ymdLocal(new Date(t))).split("-"); return d.length === 3 ? `${d[2]}/${d[1]}/${d[0]}` : String(v); };
 const STATUS_COLOR = { draft: "#9fb2c8", sent: "#38bdf8", paid: "#34d399", overdue: "#f87171", void: "#6b7280" };
 
 export default function BillingPanel({ bid, building }) {
