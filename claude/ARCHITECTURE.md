@@ -2,7 +2,10 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-22 · App version: v0.35.4 (every date a person reads is the local day:
+> Last updated: 2026-09-22 · App version: v0.36.0 (walk-through register: committee amendments with a
+> database-forced trail, photos and report credit for closures between walks, Nothing to report and
+> Not walked per group, instant report tab, search including closed findings; secrets moved to Vault;
+> v0.35.4 every date a person reads is the local day:
 > `today_local()` in 0025, billing and permit functions rewritten onto it, `localDay()` in the app;
 > v0.35.3 walk dates follow the local calendar, not UTC,
 > via migration 0024 and `localDate()`; Complete walk replaced by Go to Finish so every walk ends issued;
@@ -401,7 +404,10 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.35.4 (current, 22 Sep 2026):** The UTC date fault fixed everywhere, not just walks.
+- **v0.36.0 (current, 22 Sep 2026):** The walk-through register becomes correctable, searchable and
+  complete (0028), the last two UTC dates go (0027: findings view, proxy voting policy), and the
+  billing-cron and inbound-email secrets move from source into Vault (0026). See changelog.
+- **v0.35.4 (22 Sep 2026):** The UTC date fault fixed everywhere, not just walks.
   `today_local()` (0025) replaces `CURRENT_DATE` in five functions and three defaults, the
   permit approval date stops casting `decided_at` in UTC, billing-cron and proxy-form-pdf
   format in Brisbane, and 34 app call sites convert timestamps with `localDay()`. See changelog.
@@ -503,6 +509,63 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## Changelog
 
+### v0.36.0: the walk-through register becomes correctable, searchable and complete (22 Sep 2026)
+
+Migrations `0026_internal_secrets_vault`, `0027_local_dates_view_and_proxy_policy`,
+`0028_walkthrough_amend_and_not_walked`; edge functions `billing-cron` v10 and `inbound-email` v10
+(both now in `supabase/functions/`); `src/ResidentPortal.jsx`, `src/db.js`. Production and demo
+builds green. Proven three ways: the database rules as a Curve committee member inside a
+rolled-back transaction (8 of 8), the screens driven end to end in a headless browser on the demo
+build, and `printWalkReport()` run in isolation against Curve-shaped data (9 of 9).
+
+- **Amending a finding, with a forced trail (0028).** Before this, anyone with `can_maint` could
+  change a finding's class, owner or due date with a plain UPDATE and nothing recorded it.
+  `walkthrough_findings_guard` now treats any change to class, location, observation,
+  required_outcome, owner, due_date, risk_rating or section_id as an amendment: refused on a closed
+  finding, a committee act wherever closure is (per building, `walkthrough_closure`), and refused
+  unless `nalohub.amend_reason` is set for the transaction. `amend_walk_finding(id, patch, reason)`
+  (security invoker, so RLS still applies) sets it and applies the patch. An AFTER UPDATE trigger,
+  `walkthrough_findings_amend_event`, writes an `updated` event carrying the reason as its note and
+  a `changes` jsonb of every field's `from` and `to`. The screen cannot skip any of this; the
+  database does it. The drawer shows these as Amended, with each change spelled out.
+- **The trail is tighter (0028).** `walkthrough_finding_events_guard` now also refuses changes to
+  `changes` and `walkthrough_id` (except the FK's set-null), and allows a note or photo to be
+  added to an entry that has none but never changed once written. Previously a note could be
+  rewritten.
+- **A closed finding is a fixed record (0028).** Reopening is refused unless platform admin (to
+  correct a mistaken closure). The Reopen button is gone. A problem that comes back is raised as
+  a new finding that names the old reference.
+- **Closures between walks reach the report.** `walkClosures(walk, walks, findings)`, shared by the
+  PDF and Word exports: closed at the walk belongs to that walk; closed between walks belongs to
+  the next walk (after the previous walk's date, up to and including this one's); on the latest
+  walk, anything closed since is listed under "Closed since this walk". The tracking table counts
+  between-walk closures against the next issued walk. The finding drawer now has its own camera,
+  so a closure between walks carries its after photo. Before this, such closures had no photo and
+  appeared in no report.
+- **Nothing to report and Not walked, per group.** `setWalkResultsBulk()` answers every unanswered
+  question in a group OK in one upsert that names only `result`, so existing photos survive. Not
+  walked is stored on the walk in `walkthroughs.sections_not_walked` (jsonb array of
+  `{section_id, name, reason}`); the group's questions hide, the report lists it in Part 1 and
+  Part 3, and `nilCount` only counts groups that were actually walked.
+- **Report tab opens immediately.** `openReportWindow()` runs inside the click, while the browser
+  still treats it as the person's own action, and shows a working screen with a live photo count
+  (`collectEvidence(..., onProgress)`); `printWalkReport({ win })` then replaces it with the
+  report. Previously the tab opened after the photo work, and Safari blocked it as a pop-up.
+- **Search and a Closed tile.** One box searches reference, place, observation, owner, group and
+  class across every finding, open or closed; closed findings list newest first.
+- **Last two UTC dates (0027).** The `walkthrough_findings_expanded.overdue` column and the
+  `motion_votes.votes_insert` RLS policy both used `CURRENT_DATE`; the policy meant a proxy starting
+  today could not vote before 10:00 and one that ended yesterday could until 10:00. Both rebuilt
+  from their live definitions with `today_local()`. No view, policy, function or default in
+  `public` now uses `CURRENT_DATE`.
+- **Secrets out of source (0026).** `billing_cron_token` and `inbound_email_token` are generated
+  inside the migration straight into Vault, so the values exist nowhere else. The functions read
+  them through `internal_secret(name)` (service_role only, name allowlisted) and accept them only in
+  an `x-nalo-internal` header; the pg_cron job sends that header, read from Vault at run time.
+  Proven from the database: old query-string secret 403, no header 403, old inbound secret 403,
+  the job's exact call 200. The old values were never committed and no longer work.
+- **Demo.** The demo personas no longer carry the owner's name, email or unit.
+
 ### v0.35.4: every date a person reads is the local day (22 Sep 2026)
 
 Migration `0025_local_dates`; edge functions `billing-cron` v9 and `proxy-form-pdf` v9 (both now
@@ -539,9 +602,8 @@ and `timeZone: "Australia/Brisbane"` in edge functions. Never slice a timestamp 
   prepared-on date and file name, notifications, dispute and correspondence dates, key receipt
   and issue dates, vote history, marketplace expiry, the maintenance report date filter, unit
   move-out and key returned dates, the data export file name, and invoice paid dates in Billing.
-- **Not changed.** `billing-cron` and `inbound-email` both carry a shared secret in source,
-  checked against a `?secret=` query parameter with `verify_jwt=false`, so it also sits in the
-  pg_cron command and request logs. Move to `Deno.env` and rotate; logged as pending.
+- **Secrets:** `billing-cron` and `inbound-email` carried a shared secret in source and in the
+  URL; moved to Vault the same day in v0.36.0 (migration 0026).
 
 ### v0.35.3: walk dates are local, and every walk ends issued (22 Sep 2026)
 

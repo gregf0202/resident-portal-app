@@ -1322,6 +1322,24 @@ export async function discardWalk(bid, walkId) {
   audit(bid, "walkthrough.discarded", walkId);
 }
 
+// Amend an open finding. The database refuses any change to class, place, observation,
+// outcome, owner, due date or risk without a reason, records every field's before and
+// after as an 'updated' event, and refuses it on a closed finding (migration 0028).
+export async function amendFinding(bid, id, patch, reason) {
+  const { error } = await supabase.rpc("amend_walk_finding", { p_id: id, p_patch: patch, p_reason: reason });
+  if (error) throw error;
+  audit(bid, "walkthrough.finding_amended", id);
+}
+
+// One-tap nil return: answer every question not yet answered in a group. The upsert names
+// only the result column, so a photo already taken against a question is kept.
+export async function setWalkResultsBulk(walkId, itemIds, result) {
+  if (!itemIds.length) return;
+  const rows = itemIds.map((iid) => ({ walkthrough_id: walkId, item_id: iid, result }));
+  const { error } = await supabase.from("walkthrough_results").upsert(rows, { onConflict: "walkthrough_id,item_id" });
+  if (error) throw error;
+}
+
 export async function setWalkMeta(walkId, patch) {
   const { error } = await supabase.from("walkthroughs").update(patch).eq("id", walkId);
   if (error) throw error;
@@ -2254,6 +2272,16 @@ if (DEMO_MODE) {
   };
   discardWalk = async (_b, wid) => { const i = DS.walks.findIndex((x) => x.id === wid); if (i >= 0) DS.walks.splice(i, 1); };
   setWalkMeta = async (wid, patch) => { const w = DS.walks.find((x) => x.id === wid); if (w) Object.assign(w, patch); };
+  amendFinding = async (_b, fid, patch, reason) => {
+    const f = (DS.findings || []).find((x) => x.id === fid); if (!f) return;
+    if (f.status !== "open") throw new Error("only an open finding can be amended; a closed finding is a fixed record");
+    const changes = {};
+    ["class", "location", "observation", "required_outcome", "owner", "due_date", "risk_rating"].forEach((k) => {
+      if (k in patch && (f[k] || null) !== (patch[k] || null)) { changes[k] = { from: f[k] || null, to: patch[k] || null }; f[k] = patch[k] || null; }
+    });
+    (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: fid, event: "updated", note: reason, changes, occurred_at: now() });
+  };
+  setWalkResultsBulk = async (wid, iids, result) => { for (const iid of iids) await setWalkResultPhoto(wid, iid, result, undefined, null); };
   issueWalk = async (_b, wid, summary) => { const w = DS.walks.find((x) => x.id === wid); if (w) { w.status = "completed"; w.summary = summary; w.issued_at = now(); } };
   listNotifications = async () => [...DS.notifications];
   markNotificationRead = async (nid) => { const n = DS.notifications.find((x) => x.id === nid); if (n) n.read_at = now(); };
