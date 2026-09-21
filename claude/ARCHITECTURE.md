@@ -2,7 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-20 · App version: v0.35.2 (All requests filters + AGM pack export;
+> Last updated: 2026-09-22 · App version: v0.35.3 (walk dates follow the local calendar, not UTC,
+> via migration 0024 and `localDate()`; Complete walk replaced by Go to Finish so every walk ends issued;
+> v0.35.2 All requests filters + AGM pack export;
 > v0.35.1 public parking-permit verify page + `permit-verify` edge function; v0.35.0 rebuilt the Building Walk Through for Curve Birtinya
 > as a 13-section, 176-question checklist bound to the Caretaking and Letting Agreement, with
 > a persistent append-only findings register and branded PDF/Word reports). `permit-pdf` v9
@@ -397,7 +399,12 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.35.0 (current, 20 Sep 2026):** The Building Walk Through becomes a register rather
+- **v0.35.3 (current, 22 Sep 2026):** Walk dates are local and every walk finishes issued.
+  `walk_date` and `first_raised_on` defaulted to UTC `CURRENT_DATE`, so anything before 10am in
+  Queensland was dated the day before; the app now sends the device date and 0024 makes the
+  fallback Brisbane. Complete walk (which stranded walks unissued) became Go to Finish, and
+  Continue is offered on any unissued walk. See changelog.
+- **v0.35.0 (20 Sep 2026):** The Building Walk Through becomes a register rather
   than a checklist. 13 sections and 176 questions seeded from Schedule 1 of Curve's
   Caretaking and Letting Agreement (0022), an append-only `walkthrough_findings` register
   with a six-class finding scheme and committee-verified closure (0021), and three
@@ -489,6 +496,35 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.35.3: walk dates are local, and every walk ends issued (22 Sep 2026)
+
+`src/db.js` (`localDate()`, `createWalk`, `raiseFinding`, two demo shims),
+`src/ResidentPortal.jsx` (walk screen, Past walks, the in-app walk-through guide), migration
+`0024_walk_dates_brisbane`. Demo and production builds green.
+
+- **Dates.** `walkthroughs.walk_date` and `walkthrough_findings.first_raised_on` defaulted to
+  `CURRENT_DATE`, which Postgres evaluates in the database timezone, UTC. Brisbane is UTC+10 with
+  no daylight saving, so a walk started before 10:00 was stored as the previous day; the walk
+  opened at 09:31 on 20 Sep read 19 Sep. The app now sends the device's own date from
+  `localDate()`, which also replaces the `toISOString().slice(0, 10)` UTC slice in the demo shims,
+  and 0024 changes both defaults to `(now() at time zone 'Australia/Brisbane')::date` as the
+  fallback. Verified live at 06:48 Brisbane on 22 Sep: UTC date 21 Sep, new default 22 Sep.
+  Device date rather than a fixed zone is deliberate: a building in Perth or Adelaide gets its own
+  calendar day.
+- **Not changed, same bug:** `invoices.issue_date`, `parking_permits.approval_date` and
+  `proxy_appointments.date_from` still default to UTC `CURRENT_DATE`. Each prints on a document a
+  person reads, so each will show yesterday before 10am. Logged as pending in the Feature Register.
+- **One way to finish a walk.** Complete walk called `completeWalk()`, which set
+  `status = 'completed'` without `issued_at`. Continue was offered only on `in_progress` walks, so a
+  walk ended that way could never be reopened to issue, never entered the report's tracking table
+  (which counts issued walks only) and printed as Draft permanently. The button is now Go to
+  Finish, which scrolls to the Finish card where Issue this walk lives, and Continue is offered on
+  any walk with no `issued_at`, which also recovers any walk already stranded. Discard stays
+  in-progress only. `completeWalk()` remains in db.js but nothing calls it.
+- **In-app guide.** The walk-through guide still said Complete walk, named a Word button that no
+  longer exists, and sent every fault to Maintenance, which contradicted the S-class rule. It is
+  rewritten for the register in seven steps, keeping the `g-walk-load` and `g-walk-start` targets.
 
 ### v0.35.2 — All requests can be filtered and exported for the AGM pack (20 Sep 2026)
 

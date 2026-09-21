@@ -1181,8 +1181,12 @@ export async function listWalks(bid) {
   if (error) throw error;
   return data || [];
 }
+// The device's own calendar date. toISOString() is UTC, which in Queensland is the
+// previous day until 10am, so it must never be used for a date a person will read.
+const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
 export async function createWalk(bid, attendees) {
-  const { data, error } = await supabase.from("walkthroughs").insert({ building_id: bid, attendees: attendees || null }).select("id").single();
+  const { data, error } = await supabase.from("walkthroughs").insert({ building_id: bid, attendees: attendees || null, walk_date: localDate() }).select("id").single();
   if (error) throw error;
   audit(bid, "walkthrough.started", attendees || "");
   return data.id;
@@ -1249,6 +1253,7 @@ export async function raiseFinding(bid, f) {
     frequency: f.frequency || null,
     risk_rating: f.cls === "H" ? (f.risk || "medium") : null,
     first_raised_walk_id: f.walkId || null,
+    first_raised_on: localDate(),
   };
   const { data, error } = await supabase.from("walkthrough_findings").insert(row).select("*").single();
   if (error) throw error;
@@ -2206,7 +2211,7 @@ if (DEMO_MODE) {
   addWalkItem = async (_b, area, item) => { DS.walkItems.push({ id: id(), area, item, sort: 999, active: true }); };
   removeWalkItem = async (_b, iid) => { DS.walkItems = DS.walkItems.filter((i) => i.id !== iid); };
   listWalks = async () => [...DS.walks];
-  createWalk = async (_b, attendees) => { const wid = id(); DS.walks.unshift({ id: wid, walk_date: now().slice(0, 10), attendees, status: "in_progress", summary: null }); DS.walkResults[wid] = []; return wid; };
+  createWalk = async (_b, attendees) => { const wid = id(); DS.walks.unshift({ id: wid, walk_date: localDate(), attendees, status: "in_progress", summary: null }); DS.walkResults[wid] = []; return wid; };
   listWalkResults = async (wid) => [...(DS.walkResults[wid] || [])];
   setWalkResult = async (wid, iid, result, note) => setWalkResultPhoto(wid, iid, result, note, null);
   setWalkResultPhoto = async (wid, iid, result, note, photoPath) => {
@@ -2231,7 +2236,7 @@ if (DEMO_MODE) {
       item_id: f.itemId || null, location: f.location || null, observation: f.observation,
       standard_snapshot: f.standard || null, standard_is_general: !!f.general, required_outcome: f.outcome || null,
       owner: f.owner || null, due_date: f.due || null, risk_rating: f.cls === "H" ? (f.risk || "medium") : null,
-      status: "open", first_raised_on: now().slice(0, 10), first_raised_walk_id: f.walkId || null,
+      status: "open", first_raised_on: localDate(), first_raised_walk_id: f.walkId || null,
       walks_open: 1, overdue: false, section_name: f.sectionName || null };
     DS.findings.unshift(row);
     (DS.findingEvents = DS.findingEvents || []).push({ id: id(), finding_id: row.id, walkthrough_id: f.walkId || null, event: "raised", note: f.observation, photo_path: f.photoPath || null, occurred_at: now() });
