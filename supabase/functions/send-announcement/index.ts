@@ -4,12 +4,18 @@
 // manager posts a notice in NaloHub; this emails the residents it targets at
 // their real email addresses (in addition to the in-app notice), via Resend.
 //
-// Recipients are resolved SERVER-SIDE from memberships so the client can never
-// email arbitrary addresses:
-//   audience "all"      -> every active owner + tenant with an email
-//   audience "owners"   -> active owners with an email
-//   audience "specific" -> the memberships whose id is in recipientIds
-// Addresses are placed in BCC so residents never see each other's email.
+// v7 (0.37.0): recipients come from the UNIT REGISTER (current owners and
+// tenants) merged with app members, de-duplicated on email, via the SQL
+// function broadcast_recipients(). The composer preview calls the same
+// function, so the preview and the send cannot disagree. The client can never
+// email arbitrary addresses: it names an audience, a saved list or register
+// keys, and the server resolves them.
+//   audience "all" | "residents" | "owners" | "tenants" | "offsite"
+//   audience "list"     -> listId (a saved distribution list)
+//   audience "specific" -> people: ["up:<unit_people.id>" | "m:<membership.id>"]
+//                          (legacy recipientIds = membership ids still accepted)
+// Addresses go in BCC, in batches (Resend allows 50 addresses per message).
+// Every send writes an announcement_sends row: who it went to, and when.
 // Replies route to the building's NaloHub inbox (reply_to) so they land in-app.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -45,7 +51,7 @@ Deno.serve(async (req) => {
 
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-  const { buildingId, subject, bodyText, audience, recipientIds } = body || {};
+  const { buildingId, subject, bodyText, audience, recipientIds, people, listId, announcementId } = body || {};
   if (!buildingId) return json({ error: "buildingId required" }, 400);
   if (!subject) return json({ error: "subject required" }, 400);
 
@@ -53,28 +59,34 @@ Deno.serve(async (req) => {
 
   // --- Authorization: caller must be committee / strata / manager of building --
   const { data: mine } = await db.from("memberships")
-    .select("role, status").eq("building_id", buildingId).eq("user_id", uid).maybeSingle();
+    .select("role, status, full_name").eq("building_id", buildingId).eq("user_id", uid).maybeSingle();
   const posterRole = mine?.role;
   if (!mine || mine.status !== "active" || !["admin", "bcc", "strata", "manager"].includes(posterRole)) {
     return json({ error: "Not permitted for this building" }, 403);
   }
 
-  // --- Resolve recipient emails server-side ------------------------------------
-  const { data: mems, error: mErr } = await db.from("memberships")
-    .select("id, full_name, email, role, status").eq("building_id", buildingId).eq("status", "active");
-  if (mErr) return json({ error: "could not load members", detail: mErr.message }, 500);
-
+  // --- Resolve recipients server-side from the register + app members -------
   const aud = audience || "all";
-  const ids = new Set(Array.isArray(recipientIds) ? recipientIds : []);
-  const targets = (mems || []).filter((m: any) => {
-    if (!m.email) return false;
-    if (aud === "specific") return ids.has(m.id);
-    if (aud === "owners") return m.role === "owner";
-    // "all" -> the resident body (owners + tenants)
-    return m.role === "owner" || m.role === "tenant";
+  if (!["all", "residents", "owners", "tenants", "offsite", "list", "specific"].includes(aud)) return json({ error: "unknown audience" }, 400);
+  const keys = Array.isArray(people) && people.length ? people
+    : (Array.isArray(recipientIds) ? recipientIds.map((id: string) => "m:" + id) : []);
+  const { data: resolved, error: rErr } = await db.rpc("broadcast_recipients", {
+    p_building: buildingId, p_audience: aud, p_list: aud === "list" ? listId : null, p_people: keys,
   });
-  const emails = Array.from(new Set(targets.map((m: any) => String(m.email).trim()).filter(Boolean)));
-  if (emails.length === 0) return json({ ok: true, sent: 0, note: "no matching recipients with an email" });
+  if (rErr) return json({ error: "could not resolve recipients", detail: rErr.message }, 400);
+  const folks: any[] = resolved?.people || [];
+  const emails = Array.from(new Set(folks.map((p) => String(p.email || "").trim()).filter(Boolean)));
+  const listName: string | null = resolved?.list_name || null;
+
+  const record = async (emailed: number) => {
+    await db.from("announcement_sends").insert({
+      building_id: buildingId, announcement_id: announcementId || null, subject, audience: aud,
+      list_id: aud === "list" ? listId : null, list_name: listName,
+      recipients: folks.map((p) => ({ name: p.name, unit: p.unit, kind: p.kind, email: p.email || null })),
+      people_count: folks.length, emailed_count: emailed, no_email_count: folks.length - emails.length, sent_by: uid,
+    });
+  };
+  if (emails.length === 0) { await record(0); return json({ ok: true, sent: 0, people: folks.length, note: "no matching recipients with an email" }); }
 
   // --- Sender + reply-to -------------------------------------------------------
   const { data: b } = await db.from("buildings").select("data").eq("id", buildingId).maybeSingle();
@@ -106,7 +118,7 @@ Deno.serve(async (req) => {
 
   if (!RESEND_API_KEY) return json({ ok: false, sent: 0, error: "email provider not configured" }, 200);
 
-  const audLabel = aud === "owners" ? "owners" : aud === "specific" ? "selected residents" : "residents";
+  const audLabel = ({ all: "owners and tenants", residents: "residents", owners: "owners", tenants: "tenants", offsite: "owners who live elsewhere", specific: "selected people" } as Record<string, string>)[aud] || (listName ? `the ${listName} list` : "residents");
   const footer =
     `\n\nThis notice was posted in NaloHub for ${buildingName} and emailed to ${audLabel}.` +
     `${replyTo ? ` Reply to this email and it lands with your committee in NaloHub.` : ""}\nBe In The Nalo 👋`;
@@ -118,26 +130,32 @@ Deno.serve(async (req) => {
     `<div style="font-size:12px;color:#6b7280">Posted by ${esc(posterName)} · ${esc(buildingName)} via NaloHub` +
     `${replyTo ? ` · reply and it lands in your building's NaloHub` : ""}</div></div>`;
 
-  const payload: any = {
-    from: `"${senderName}" <${senderAddress}>`,
-    to: [senderAddress],
-    bcc: emails,
-    subject,
-    text: (bodyText || "") + footer,
-    html,
-  };
-  if (replyTo) payload.reply_to = replyTo;
-
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) { const r = await res.json(); return json({ ok: true, sent: emails.length, id: r?.id || null }); }
-    const detail = await res.text();
-    return json({ ok: false, sent: 0, error: "send failed", detail }, 200);
-  } catch (e) {
-    return json({ ok: false, sent: 0, error: String((e as Error).message || e) }, 200);
+  // Resend accepts at most 50 addresses per message across to/cc/bcc, and `to`
+  // takes one slot, so BCC goes out in batches of 45.
+  const BATCH = 45;
+  let sent = 0; const ids: string[] = []; const failures: string[] = [];
+  for (let i = 0; i < emails.length; i += BATCH) {
+    const chunk = emails.slice(i, i + BATCH);
+    const payload: any = {
+      from: `"${senderName}" <${senderAddress}>`,
+      to: [senderAddress],
+      bcc: chunk,
+      subject,
+      text: (bodyText || "") + footer,
+      html,
+    };
+    if (replyTo) payload.reply_to = replyTo;
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) { const r = await res.json(); sent += chunk.length; if (r?.id) ids.push(r.id); }
+      else failures.push(await res.text());
+    } catch (e) { failures.push(String((e as Error).message || e)); }
   }
+  await record(sent);
+  if (sent === 0) return json({ ok: false, sent: 0, people: folks.length, error: "send failed", detail: failures[0] || null }, 200);
+  return json({ ok: true, sent, people: folks.length, noEmail: folks.length - emails.length, ids, partial: failures.length > 0 });
 });

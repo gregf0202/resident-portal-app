@@ -2,7 +2,10 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-22 · App version: v0.36.0 (walk-through register: committee amendments with a
+> Last updated: 2026-09-22 · App version: v0.37.0 (broadcast audiences: notices resolved from the unit
+> register via `broadcast_recipients()` (0029, 0030), Residents / Tenants / Owners who live elsewhere,
+> `unit_people.lives_here`, saved distribution lists, `announcement_sends` record, send-announcement v7
+> batching BCC at 45; v0.36.0 walk-through register: committee amendments with a
 > database-forced trail, photos and report credit for closures between walks, Nothing to report and
 > Not walked per group, instant report tab, search including closed findings; secrets moved to Vault;
 > v0.35.4 every date a person reads is the local day:
@@ -269,7 +272,9 @@ Finder; the paths in this file are what he needs to put each file in the right f
 - Edge functions in `supabase/functions/` (Deno): `send-correspondence` (Resend send,
   `verify_jwt=true`), `receive-correspondence` (inbound webhook), `maintenance-reminders`,
   **`send-announcement`** (emails an announcement to the residents it targets, resolving
-  recipients server-side from memberships; `verify_jwt=true`. **v2, 2026-07-20:** `reply_to`
+  recipients server-side; `verify_jwt=true`. **v7, 2026-09-22:** recipients come from
+  `broadcast_recipients()` (unit register + app members, de-duplicated on email), BCC in batches of
+  45 because Resend caps a message at 50 addresses, and every send writes `announcement_sends`. **v2, 2026-07-20:** `reply_to`
   now routes to the building's inbox `<slug>@send.nalohub.com` so notice replies land in
   Correspondence, falling back to the committee email only if no mailbox exists), and
   **`ensure-mailbox`** (returns/creates a building's single clean public inbound address,
@@ -404,7 +409,11 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.36.0 (current, 22 Sep 2026):** The walk-through register becomes correctable, searchable and
+- **v0.37.0 (current, 22 Sep 2026):** Broadcast audiences. Notices are resolved from the unit
+  register, not app accounts (Curve: 1 app member vs 98 distinct register emails). New audiences,
+  `lives_here`, saved distribution lists and a per-notice send record (0029, 0030, send-announcement
+  v7). See changelog.
+- **v0.36.0 (22 Sep 2026):** The walk-through register becomes correctable, searchable and
   complete (0028), the last two UTC dates go (0027: findings view, proxy voting policy), and the
   billing-cron and inbound-email secrets move from source into Vault (0026). See changelog.
 - **v0.35.4 (22 Sep 2026):** The UTC date fault fixed everywhere, not just walks.
@@ -508,6 +517,70 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.37.0: notices reach the building, not just the app (22 Sep 2026)
+
+Migrations `0029_broadcast_audiences`, `0030_broadcast_recipients_fields`; edge function
+`send-announcement` v7 (deployed 22 Sep); `src/ResidentPortal.jsx`, `src/db.js`. Demo and production
+builds green; demo flows exercised end to end in a headless browser.
+
+**The fault.** `send-announcement` v6 resolved recipients from `memberships`, so "All residents"
+meant "everyone with an app account". At Curve that was 1 person, against 101 register rows with an
+email (98 distinct addresses). Nothing was ever wrong in the UI: the flash said "emailed to all
+residents".
+
+**One resolver.** `broadcast_recipients(p_building, p_audience, p_list, p_people) returns jsonb`,
+SECURITY DEFINER, EXECUTE revoked from `anon`. When called as a signed-in user it requires
+`has_role(bid, admin|bcc|strata|manager)`; with no `auth.uid()` (service role) the edge function has
+already checked the poster. It unions current `unit_people` owners/tenants (`key 'up:<id>'`) with
+active `memberships` of role owner/tenant/bcc (`'m:<id>'`, bcc counted as owner) that do not match
+a register email, filters by audience, then `distinct on (coalesce(lower(email), key))` preferring
+the register row. Returns `people[]` (key, name, email, unit, kind, lives_here, membership_id, level,
+pet) plus `count`, `emailable`, `no_email`, `units`, `list_name`. The composer preview and
+send-announcement both call it, so the preview cannot disagree with the send.
+
+- Audiences: `all` (owners + tenants), `residents` (tenants + owners where lives_here), `owners`,
+  `tenants`, `offsite` (owners where not lives_here), `list`, `specific` (register/member keys).
+- **`unit_people.lives_here boolean`**, null = follow the tenancy: an owner of a lot with no current
+  tenant is assumed to live there. Tenants always count as living here. Unit Search shows a
+  tappable Lives here / Lives elsewhere pill on owners, "(assumed)" while null. At Curve the default
+  gives 68 owner-occupier rows and 18 owners of tenanted lots.
+- **Level** is derived from the unit number: `^([A-Za-z]|[0-9]+)[0-9]{2}$` gives 606 -> 6,
+  G01 -> G; anything else (Office, 1-2 digit numbers) has no level.
+- **`distribution_lists`** (building_id, name, kind manual|rule, members jsonb of keys, rule jsonb
+  {audience, levels[], units[], pets}). RLS: all ops for admin/bcc/strata/manager. Archived register
+  rows drop out of manual lists because only `is_current` rows are resolved. `units[]` is supported
+  by the resolver but not yet exposed in the UI.
+- **`announcement_sends`**: one row per send (audience, list name, recipients snapshot with
+  name/unit/kind/email, people, emailed and no-email counts, sender). SELECT for posters only;
+  inserts only from the edge function. Shown as the send record on the notice detail.
+
+**send-announcement v7.** Accepts `audience`, `listId`, `people`, `announcementId`; legacy
+`recipientIds` (membership ids) are mapped to `'m:'` keys so an old client still works. Resend
+allows 50 addresses per message across to/cc/bcc and `to` holds the building address, so BCC goes
+in batches of 45: v6 would have failed outright on any send over 49. Returns `sent`, `people`,
+`noEmail`, `partial`. Also fixed: `posterName` read `full_name` without selecting it, so every email
+said "Posted by Your committee".
+
+**In-app visibility** (`activeAnnouncements`). Posters (bcc, admin, manager, strata) see every
+notice. `all`/`owners`/`tenants` follow the reader's role at read time. `residents`, `offsite`,
+lists and `specific` are fixed at send time: `recipientIds` stores the membership ids the resolver
+matched. Someone who joins the app afterwards does not retroactively see a targeted notice.
+
+**UI.** Composer "Send to" select (building audiences, saved lists, pick specific people), a hint
+per audience, a live recipient line (people, units, emailed, no email, See who), the Post button
+names the count. Hand-picked selections can be saved as a list from the composer; Distribution
+lists panel on Announcements creates hand-picked and rule lists (start-from audience, level chips,
+pets), with a live count, rename, edit and delete. Strata managers may now choose an audience
+(default still Owners). No email is sent by any of this except Post.
+
+**Demo.** `previewBroadcast`, list CRUD, `sendAnnouncementEmail` and `listAnnouncementSends` are
+shimmed over `DS`, with two seeded lists (Pool working group, Pet owners and their tenants). Demo
+counts at SeaHaven: Everyone 34, Residents 24, Owners 23, Tenants 11, Off-site owners 10.
+
+**Known gaps.** Building managers cannot set `lives_here` unless the committee has given them
+register write access (same rule as all register edits). Email body is still plain text inside a
+minimal HTML wrapper: no logo, formatting, images or signature block (see Feature Register §3).
 
 ### v0.36.0: the walk-through register becomes correctable, searchable and complete (22 Sep 2026)
 

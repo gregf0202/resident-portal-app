@@ -1082,7 +1082,53 @@ export async function sendAnnouncementEmail(payload) {
   const { data, error } = await supabase.functions.invoke("send-announcement", { body: payload });
   if (error) throw error;
   if (data && data.error) throw new Error(data.error);
-  return data; // { ok, sent, id? }
+  return data; // { ok, sent, people, noEmail, ids, partial }
+}
+
+// ---- Broadcast audiences and saved distribution lists (0.37.0) -------------
+// Who a notice reaches is resolved by broadcast_recipients() in the database,
+// from the unit register (current owners and tenants) merged with app members
+// and de-duplicated on email. The composer preview and send-announcement both
+// call it, so what the committee is shown is exactly what gets sent.
+//   audience: all | residents | owners | tenants | offsite | list | specific
+//   people:   ["up:<unit_people.id>" | "m:<membership.id>"] for "specific"
+export async function previewBroadcast(bid, audience, listId, people) {
+  const { data, error } = await supabase.rpc("broadcast_recipients", {
+    p_building: bid, p_audience: audience || "all", p_list: listId || null, p_people: people || [],
+  });
+  if (error) throw error;
+  return data; // { people:[{key,name,email,unit,kind,lives_here,membership_id,level,pet}], count, emailable, no_email, units, list_name }
+}
+export async function listDistributionLists(bid) {
+  const { data, error } = await supabase.from("distribution_lists").select("*").eq("building_id", bid).order("name");
+  if (error) throw error;
+  return data || [];
+}
+export async function saveDistributionList(bid, l) {
+  const row = { name: String(l.name || "").trim(), kind: l.kind === "rule" ? "rule" : "manual",
+    members: l.kind === "rule" ? [] : (l.members || []), rule: l.kind === "rule" ? (l.rule || {}) : {} };
+  if (l.id) {
+    const { data, error } = await supabase.from("distribution_lists").update({ ...row, updated_at: new Date().toISOString() }).eq("id", l.id).select().single();
+    if (error) throw error;
+    audit(bid, "dlist.updated", row.name);
+    return data;
+  }
+  const { data, error } = await supabase.from("distribution_lists").insert({ building_id: bid, ...row }).select().single();
+  if (error) throw error;
+  audit(bid, "dlist.created", row.name);
+  return data;
+}
+export async function deleteDistributionList(bid, id, name) {
+  const { error } = await supabase.from("distribution_lists").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "dlist.deleted", name || id);
+}
+// The committee-side record of who a notice was actually sent to.
+export async function listAnnouncementSends(bid, announcementId) {
+  const { data, error } = await supabase.from("announcement_sends").select("*")
+    .eq("building_id", bid).eq("announcement_id", announcementId).order("sent_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
 }
 
 // Ensure (and return) this building's single public inbound address, e.g.
@@ -2080,7 +2126,57 @@ if (DEMO_MODE) {
   getCorrThread = async (tid) => { const t = DS.corr.threads.find((x) => x.id === tid); if (!t) return { thread: null, messages: [] }; return { thread: { id: t.id, buildingId: t.buildingId, subject: t.subject, status: t.status, visibility: t.visibility, contextType: t.contextType, contextId: t.contextId, createdBy: t.createdBy, createdAt: t.createdAt, lastActivityAt: t.lastActivityAt, contact: t.contact }, messages: [...t.messages].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)) }; };
   listCorrContacts = async () => [...DS.corr.contacts].sort((a, b) => a.name.localeCompare(b.name)).map((c) => ({ id: c.id, name: c.name, org: c.org, email: c.email, phone: c.phone, partyType: c.partyType, notes: c.notes || "" }));
   saveCorrContact = async (_b, c) => { if (c && c.id) { const x = DS.corr.contacts.find((y) => y.id === c.id); if (x) Object.assign(x, { name: c.name, org: c.org, email: c.email, phone: c.phone, partyType: c.partyType, party_type: c.partyType, notes: c.notes }); return c.id; } const nc = { id: id(), name: c.name, org: c.org || "", email: c.email || "", phone: c.phone || "", partyType: c.partyType || "other", party_type: c.partyType || "other", notes: c.notes || "" }; DS.corr.contacts.push(nc); return nc.id; };
-  sendAnnouncementEmail = async () => ({ ok: true, sent: 0 });
+  // Broadcast audiences: the same rules as broadcast_recipients(), over DS.
+  const demoLevel = (n) => { const m = /^([A-Za-z]|[0-9]+)[0-9]{2}$/.exec(String(n || "")); return m ? m[1].toUpperCase() : null; };
+  const demoAudienceOk = (p, aud, keys) => ({ all: true, owners: p.kind === "owner", tenants: p.kind === "tenant", residents: !!p.lives_here,
+    offsite: p.kind === "owner" && !p.lives_here, specific: (keys || []).includes(p.key) })[aud] || false;
+  previewBroadcast = async (_b, audience, listId, people) => {
+    let aud = audience || "all", rule = {}, keys = people || [], listName = null;
+    if (aud === "list") {
+      const l = (await listDistributionLists()).find((x) => x.id === listId);
+      if (!l) throw new Error("list not found");
+      listName = l.name;
+      if (l.kind === "rule") { rule = l.rule || {}; aud = rule.audience || "all"; } else { keys = l.members || []; aud = "specific"; }
+    }
+    const unitOf = Object.fromEntries(DS.units.map((u) => [u.id, u]));
+    const cur = DS.people.filter((p) => p.is_current !== false && (p.person_type === "owner" || p.person_type === "tenant"));
+    const tenanted = new Set(cur.filter((p) => p.person_type === "tenant").map((p) => p.unit_id));
+    const pets = new Set(DS.pets.map((p) => p.unit_id));
+    const rows = cur.map((p) => { const u = unitOf[p.unit_id] || {}; return { key: "up:" + p.id, name: p.full_name, email: String(p.email || "").trim() || null,
+      unit: u.unit_number || "", kind: p.person_type, level: demoLevel(u.unit_number), pet: pets.has(p.unit_id), membership_id: null,
+      lives_here: p.person_type === "tenant" ? true : (p.lives_here ?? !tenanted.has(p.unit_id)) }; });
+    const keep = (p) => demoAudienceOk(p, aud, keys) && (!(rule.levels || []).length || (rule.levels || []).includes(p.level))
+      && (!(rule.units || []).length || (rule.units || []).includes(p.unit)) && (!rule.pets || p.pet);
+    const seen = new Set(), out = [];
+    rows.filter(keep).sort((a, b) => (parseInt(a.unit, 10) || 0) - (parseInt(b.unit, 10) || 0) || a.name.localeCompare(b.name))
+      .forEach((p) => { const k = p.email ? p.email.toLowerCase() : p.key; if (seen.has(k)) return; seen.add(k); out.push(p); });
+    const emailable = out.filter((p) => p.email).length;
+    return { audience, list_name: listName, people: out, count: out.length, emailable, no_email: out.length - emailable, units: new Set(out.map((p) => p.unit)).size };
+  };
+  listDistributionLists = async () => {
+    if (!DS.dlists) {
+      const owners = DS.people.filter((p) => p.is_current !== false && p.person_type === "owner").slice(0, 5).map((p) => "up:" + p.id);
+      DS.dlists = [
+        { id: "dl-pool", name: "Pool working group", kind: "manual", members: owners, rule: {} },
+        { id: "dl-pets", name: "Pet owners and their tenants", kind: "rule", members: [], rule: { audience: "all", pets: true } },
+      ];
+    }
+    return [...DS.dlists].sort((a, b) => a.name.localeCompare(b.name));
+  };
+  saveDistributionList = async (_b, l) => {
+    await listDistributionLists();
+    const row = { name: String(l.name || "").trim(), kind: l.kind === "rule" ? "rule" : "manual", members: l.kind === "rule" ? [] : (l.members || []), rule: l.kind === "rule" ? (l.rule || {}) : {} };
+    if (l.id) { const x = DS.dlists.find((y) => y.id === l.id); if (x) Object.assign(x, row); return x; }
+    const n = { id: id(), ...row }; DS.dlists.push(n); return n;
+  };
+  deleteDistributionList = async (_b, did) => { await listDistributionLists(); DS.dlists = DS.dlists.filter((x) => x.id !== did); };
+  sendAnnouncementEmail = async (x) => {
+    const r = await previewBroadcast(x.buildingId, x.audience, x.listId, x.people);
+    (DS.sends = DS.sends || []).unshift({ id: id(), announcement_id: x.announcementId, subject: x.subject, audience: x.audience, list_name: r.list_name,
+      recipients: r.people.map((p) => ({ name: p.name, unit: p.unit, kind: p.kind, email: p.email })), people_count: r.count, emailed_count: r.emailable, no_email_count: r.no_email, sent_at: now() });
+    return { ok: true, sent: r.emailable, people: r.count, noEmail: r.no_email };
+  };
+  listAnnouncementSends = async (_b, aid) => (DS.sends || []).filter((s) => s.announcement_id === aid);
   ensureBuildingMailbox = async () => ({ slug: null, address: null, existing: false });
   sendCorrespondence = async (payload) => {
     const p = payload || {};
