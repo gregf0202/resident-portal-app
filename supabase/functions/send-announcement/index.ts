@@ -17,8 +17,35 @@
 // Addresses go in BCC, in batches (Resend allows 50 addresses per message).
 // Every send writes an announcement_sends row: who it went to, and when.
 // Replies route to the building's NaloHub inbox (reply_to) so they land in-app.
+//
+// v8 (0.38.0): the email is built by noticeEmail.js, the same file the app uses
+// for its "See the email" preview (keep the two copies byte-identical). Building
+// logo and notice photo arrive from the app already downscaled (logo 96px PNG,
+// photo 720px JPEG) and are stored in the public email-assets bucket, because
+// mail apps block data: URLs. The NaloHub mark is a 1.5 KB file on the portal.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { noticeHtml, noticeText } from "./noticeEmail.js";
+
+// NaloHub wordmark, 107x36 PNG, 48 colours, about 1.5 KB, shown at 54x18 and dimmed.
+// Served from the portal (public/email/nalohub-mark.png), deployed with the app.
+const NALOHUB_MARK_URL = "https://portal.nalohub.com/email/nalohub-mark.png";
+// The NaloHub wave along the bottom of the header, 1200x64 PNG on navy, about 1 KB (v9).
+const NALOHUB_WAVE_URL = "https://portal.nalohub.com/email/nalohub-wave.png";
+const ASSET_BUCKET = "email-assets";
+const MAX_IMG = 300 * 1024;
+const ROLE_LABEL: Record<string, string> = { bcc: "Committee", admin: "Admin", manager: "Building manager", strata: "Strata manager" };
+
+const b64ToBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+const hex = (buf: ArrayBuffer) => Array.from(new Uint8Array(buf)).map((x) => x.toString(16).padStart(2, "0")).join("");
+// data:image/png|jpeg;base64,... -> { bytes, type, ext } or null. Anything else is refused.
+function decodeImage(dataUrl: unknown) {
+  const m = /^data:(image\/(png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ""));
+  if (!m) return null;
+  const bytes = b64ToBytes(m[3]);
+  if (!bytes.length || bytes.length > MAX_IMG) return null;
+  return { bytes, type: m[1], ext: m[2] === "png" ? "png" : "jpg" };
+}
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -34,9 +61,6 @@ const cors = {
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-const esc = (s: string) =>
-  (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -51,7 +75,7 @@ Deno.serve(async (req) => {
 
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-  const { buildingId, subject, bodyText, audience, recipientIds, people, listId, announcementId } = body || {};
+  const { buildingId, subject, bodyText, audience, recipientIds, people, listId, announcementId, noticeType, images } = body || {};
   if (!buildingId) return json({ error: "buildingId required" }, 400);
   if (!subject) return json({ error: "subject required" }, 400);
 
@@ -119,16 +143,28 @@ Deno.serve(async (req) => {
   if (!RESEND_API_KEY) return json({ ok: false, sent: 0, error: "email provider not configured" }, 200);
 
   const audLabel = ({ all: "owners and tenants", residents: "residents", owners: "owners", tenants: "tenants", offsite: "owners who live elsewhere", specific: "selected people" } as Record<string, string>)[aud] || (listName ? `the ${listName} list` : "residents");
-  const footer =
-    `\n\nThis notice was posted in NaloHub for ${buildingName} and emailed to ${audLabel}.` +
-    `${replyTo ? ` Reply to this email and it lands with your committee in NaloHub.` : ""}\nBe In The Nalo 👋`;
-  const html =
-    `<div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:560px">` +
-    `<h2 style="margin:0 0 8px">${esc(subject)}</h2>` +
-    `<div style="white-space:pre-wrap;font-size:15px;line-height:1.5">${esc(bodyText || "")}</div>` +
-    `<hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0"/>` +
-    `<div style="font-size:12px;color:#6b7280">Posted by ${esc(posterName)} · ${esc(buildingName)} via NaloHub` +
-    `${replyTo ? ` · reply and it lands in your building's NaloHub` : ""}</div></div>`;
+
+  // --- Low-res images, hosted so mail apps will show them ----------------------
+  const store = db.storage.from(ASSET_BUCKET);
+  const publicUrl = (path: string) => store.getPublicUrl(path).data.publicUrl;
+  const put = async (path: string, bytes: Uint8Array, type: string) => {
+    const { error } = await store.upload(path, bytes, { contentType: type, upsert: true, cacheControl: "31536000" });
+    return error ? null : publicUrl(path);
+  };
+  let logoUrl: string | null = null, photoUrl: string | null = null;
+  const logo = decodeImage(images?.logo);
+  if (logo) logoUrl = await put(`${buildingId}/logo-${hex(await crypto.subtle.digest("SHA-256", logo.bytes)).slice(0, 16)}.${logo.ext}`, logo.bytes, logo.type);
+  const photo = decodeImage(images?.photo);
+  if (photo) photoUrl = await put(`${buildingId}/notice-${String(announcementId || crypto.randomUUID()).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40)}-${hex(await crypto.subtle.digest("SHA-256", photo.bytes)).slice(0, 8)}.${photo.ext}`, photo.bytes, photo.type);
+
+  const dateLabel = new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Brisbane", day: "numeric", month: "short", year: "numeric" }).format(new Date());
+  const tpl = {
+    buildingName, buildingInitials: b?.data?.logoText || "", logoUrl, title: subject, body: bodyText || "",
+    noticeType: noticeType || "General", photoUrl, posterName, posterRole: ROLE_LABEL[posterRole] || "",
+    replyAddress: replyTo || "", audienceLabel: audLabel, dateLabel, nalohubMarkUrl: NALOHUB_MARK_URL, waveUrl: NALOHUB_WAVE_URL,
+  };
+  const html = noticeHtml(tpl);
+  const text = noticeText(tpl);
 
   // Resend accepts at most 50 addresses per message across to/cc/bcc, and `to`
   // takes one slot, so BCC goes out in batches of 45.
@@ -141,7 +177,7 @@ Deno.serve(async (req) => {
       to: [senderAddress],
       bcc: chunk,
       subject,
-      text: (bodyText || "") + footer,
+      text,
       html,
     };
     if (replyTo) payload.reply_to = replyTo;

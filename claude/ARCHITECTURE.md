@@ -2,7 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-22 · App version: v0.37.0 (broadcast audiences: notices resolved from the unit
+> Last updated: 2026-09-22 · App version: v0.38.0 (notice emails: one shared template `noticeEmail.js`,
+> building logo header, prominent reply address, low-res hosted images in `email-assets` (0031),
+> safe **bold**/list/link formatting, send-announcement v8; v0.37.0 broadcast audiences: notices resolved from the unit
 > register via `broadcast_recipients()` (0029, 0030), Residents / Tenants / Owners who live elsewhere,
 > `unit_people.lives_here`, saved distribution lists, `announcement_sends` record, send-announcement v7
 > batching BCC at 45; v0.36.0 walk-through register: committee amendments with a
@@ -274,7 +276,9 @@ Finder; the paths in this file are what he needs to put each file in the right f
   **`send-announcement`** (emails an announcement to the residents it targets, resolving
   recipients server-side; `verify_jwt=true`. **v7, 2026-09-22:** recipients come from
   `broadcast_recipients()` (unit register + app members, de-duplicated on email), BCC in batches of
-  45 because Resend caps a message at 50 addresses, and every send writes `announcement_sends`. **v2, 2026-07-20:** `reply_to`
+  45 because Resend caps a message at 50 addresses, and every send writes `announcement_sends`.
+  **v8/v9, 2026-09-22:** two files, `index.ts` + `noticeEmail.js` (v9 adds the wave row); the email is built by the shared
+  template and images are stored in the public `email-assets` bucket. **v2, 2026-07-20:** `reply_to`
   now routes to the building's inbox `<slug>@send.nalohub.com` so notice replies land in
   Correspondence, falling back to the committee email only if no mailbox exists), and
   **`ensure-mailbox`** (returns/creates a building's single clean public inbound address,
@@ -409,7 +413,10 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.37.0 (current, 22 Sep 2026):** Broadcast audiences. Notices are resolved from the unit
+- **v0.38.0 (current, 22 Sep 2026):** Notice emails look like they come from the building: shared
+  template, logo header, reply address three times, low-res hosted images, safe formatting, a
+  "See the email" preview (0031, send-announcement v8). See changelog.
+- **v0.37.0 (22 Sep 2026):** Broadcast audiences. Notices are resolved from the unit
   register, not app accounts (Curve: 1 app member vs 98 distinct register emails). New audiences,
   `lives_here`, saved distribution lists and a per-notice send record (0029, 0030, send-announcement
   v7). See changelog.
@@ -517,6 +524,59 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.38.0: notice emails that look like the building sent them (22 Sep 2026)
+
+Migration `0031_email_assets_bucket`; edge function `send-announcement` v8 (deployed 22 Sep, two
+files); new `src/noticeEmail.js`; `public/email/nalohub-mark.png`; `src/ResidentPortal.jsx`.
+Demo and production builds green; composer, preview and in-app rendering exercised in a headless
+browser.
+
+**One template, two copies.** `src/noticeEmail.js` and
+`supabase/functions/send-announcement/noticeEmail.js` must be byte-identical (bump
+`NOTICE_EMAIL_VERSION` in both). The app imports it for in-app rendering and the "See the email
+residents will get" preview; the function imports it to build what is sent. Plain JS, no deps,
+runs in Vite and Deno. Deploy the function with BOTH files.
+
+**Safe formatting.** `parseNotice(text)` returns blocks (`p` with lines of runs, `ul`, `ol`); runs
+are `text`, `b` (`**bold**`) or `a` (`[text](url)`, bare `https://` URLs, bare email addresses).
+`safeHref` only admits `http(s)://` and `mailto:`; `javascript:` and anything else stays literal
+text. `blocksHtml` escapes every run; the app renders the same blocks as JSX (`NoticeBody`,
+`NoticeRuns`), so there is still no `dangerouslySetInnerHTML` anywhere. List cards use
+`noticePlain()` so markers never show. The preview is a `sandbox=""` iframe with `srcDoc`, no
+scripts. Composer gains B, List and Link buttons (`formatSelection`, operating on
+`#notice-body`).
+
+**Layout** (table-based, inline styles, 600px, tested at 390px): navy header with the building
+logo (48px tile) or `logoText` initials, building name as the prominent element, notice type as
+kicker; a slim "Replies go to <address>. Save it to your contacts." strip under the header; title,
+body, optional photo; signature (poster name, role label, building, Brisbane date); a highlighted
+"Your building's email address" box with a Save-to-contacts line; a navy "Reply to your
+committee" mailto button; footer with why-you-got-this and a dimmed "Powered by" NaloHub mark
+(54x18, opacity 0.55). The reply address appears three times on purpose: moving residents onto a
+new address is slow, and every notice should help. The plain-text part is rebuilt from the same
+parse.
+
+**Images, low-res and hosted.** Mail apps block `data:` URLs, and `buildings.data.logoImage` is a
+data URL (Curve's is 244 KB). Before sending, the app shrinks the logo to a 96x96 cover-cropped
+PNG and a notice photo to a 720px-wide JPEG at q0.72 (q0.55 retry if large) with `shrinkImage()`,
+and sends them as `images: { logo, photo }`. The function accepts only
+`data:image/png|jpeg;base64`, max 300 KB, and uploads to `email-assets` (public, 300 KB cap,
+PNG/JPEG only, no SELECT policy so not listable): `<building>/logo-<sha16>.png` (idempotent by
+content hash) and `<building>/notice-<announcementId>-<sha8>.jpg`. Notice photos are therefore
+reachable by anyone holding the URL; the path is not guessable. The NaloHub mark is a 107x36,
+48-colour PNG at `https://portal.nalohub.com/email/nalohub-mark.png`, shipped in `public/email/`,
+so until the app build carrying it is live the footer shows the alt text "NaloHub".
+
+**The wave (send-announcement v9, template v2).** The app header's three wave paths
+(`AnimatedHeader.jsx`) painted once in the logo teal `#64A5B7` onto navy as a 1200x64, 16-colour
+PNG (about 1 KB before the device copy re-encodes it; still well under 10 KB) at
+`public/email/nalohub-wave.png`, shown at 600x32 in its own row under the header. Pre-painted on
+navy rather than transparent, because Outlook handles PNG alpha badly; if images are blocked the
+row is plain navy. SVG and CSS backgrounds were ruled out: Gmail and Outlook drop both.
+
+**Compatibility.** An older client that sends no `images` or `noticeType` still gets the new
+template, with initials instead of the logo and no photo.
 
 ### v0.37.0: notices reach the building, not just the app (22 Sep 2026)
 
