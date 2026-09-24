@@ -1092,9 +1092,11 @@ export async function sendAnnouncementEmail(payload) {
 // call it, so what the committee is shown is exactly what gets sent.
 //   audience: all | residents | owners | tenants | offsite | list | specific
 //   people:   ["up:<unit_people.id>" | "m:<membership.id>"] for "specific"
-export async function previewBroadcast(bid, audience, listId, people) {
+export async function previewBroadcast(bid, audience, listId, people, audiences) {
+  const multi = Array.isArray(audiences) && audiences.length > 1 ? audiences : null;
   const { data, error } = await supabase.rpc("broadcast_recipients", {
-    p_building: bid, p_audience: audience || "all", p_list: listId || null, p_people: people || [],
+    p_building: bid, p_audience: multi ? null : (audience || "all"), p_list: listId || null,
+    p_people: people || [], p_audiences: multi,
   });
   if (error) throw error;
   return data; // { people:[{key,name,email,unit,kind,lives_here,membership_id,level,pet}], count, emailable, no_email, units, list_name }
@@ -1123,6 +1125,32 @@ export async function deleteDistributionList(bid, id, name) {
   if (error) throw error;
   audit(bid, "dlist.deleted", name || id);
 }
+// ---- Committee notices (0.39.0) -------------------------------------------
+// Committee-to-committee notices live in their own table with their own RLS:
+// residents cannot read them even by calling the API directly, and the building
+// manager sees only the ones explicitly shared (audience 'committee_bm').
+export async function listCommitteeNotices(bid) {
+  const { data, error } = await supabase.from("committee_notices").select("*")
+    .eq("building_id", bid).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+export async function createCommitteeNotice(bid, n) {
+  const { data, error } = await supabase.from("committee_notices").insert({
+    building_id: bid, title: String(n.title || "").trim(), body: String(n.body || ""),
+    audience: n.shareWithBm ? "committee_bm" : "committee",
+    emailed_detail: !!n.emailedDetail, created_by_name: n.postedBy || null,
+  }).select().single();
+  if (error) throw error;
+  audit(bid, "committee_notice.posted", n.title);
+  return data;
+}
+export async function deleteCommitteeNotice(bid, id, title) {
+  const { error } = await supabase.from("committee_notices").delete().eq("id", id);
+  if (error) throw error;
+  audit(bid, "committee_notice.deleted", title || id);
+}
+
 // The committee-side record of who a notice was actually sent to.
 export async function listAnnouncementSends(bid, announcementId) {
   const { data, error } = await supabase.from("announcement_sends").select("*")
@@ -2130,13 +2158,34 @@ if (DEMO_MODE) {
   const demoLevel = (n) => { const m = /^([A-Za-z]|[0-9]+)[0-9]{2}$/.exec(String(n || "")); return m ? m[1].toUpperCase() : null; };
   const demoAudienceOk = (p, aud, keys) => ({ all: true, owners: p.kind === "owner", tenants: p.kind === "tenant", residents: !!p.lives_here,
     offsite: p.kind === "owner" && !p.lives_here, specific: (keys || []).includes(p.key) })[aud] || false;
-  previewBroadcast = async (_b, audience, listId, people) => {
+  previewBroadcast = async (_b, audience, listId, people, audiences) => {
+    // Several groups at once: resolve each, then merge on email like the database does.
+    if (Array.isArray(audiences) && audiences.length > 1) {
+      const seen = new Set(), out = [];
+      for (const tok of audiences) {
+        const one = await previewBroadcast(_b, tok.startsWith("list:") ? "list" : tok, tok.startsWith("list:") ? tok.slice(5) : null, people);
+        (one.people || []).forEach((p) => { const k = p.email ? p.email.toLowerCase() : p.key; if (seen.has(k)) return; seen.add(k); out.push(p); });
+      }
+      const emailable = out.filter((p) => p.email).length;
+      return { audience: "multi", audiences, people: out, count: out.length, emailable, no_email: out.length - emailable, units: new Set(out.map((p) => p.unit)).size };
+    }
     let aud = audience || "all", rule = {}, keys = people || [], listName = null;
     if (aud === "list") {
       const l = (await listDistributionLists()).find((x) => x.id === listId);
       if (!l) throw new Error("list not found");
       listName = l.name;
       if (l.kind === "rule") { rule = l.rule || {}; aud = rule.audience || "all"; } else { keys = l.members || []; aud = "specific"; }
+    }
+    // Managing agents: the agent on the unit record, plus Managing agent contacts.
+    if (aud === "agents") {
+      const seen = new Set(), out = [];
+      DS.units.forEach((u) => { const e = String(u.agent_email || "").trim(); if (!e || seen.has(e.toLowerCase())) return; seen.add(e.toLowerCase());
+        out.push({ key: "ua:" + u.id, name: u.agent_contact || u.agent_business || "Managing agent", email: e, unit: u.unit_number, kind: "agent", lives_here: false, membership_id: null, level: null, pet: false }); });
+      DS.people.filter((p) => p.is_current !== false && p.person_type === "property_manager" && String(p.email || "").trim()).forEach((p) => {
+        const e = p.email.trim(); if (seen.has(e.toLowerCase())) return; seen.add(e.toLowerCase());
+        const u = DS.units.find((x) => x.id === p.unit_id) || {};
+        out.push({ key: "up:" + p.id, name: p.full_name, email: e, unit: u.unit_number || "", kind: "agent", lives_here: false, membership_id: null, level: null, pet: false }); });
+      return { audience, list_name: listName, people: out, count: out.length, emailable: out.filter((p) => p.email).length, no_email: 0, units: new Set(out.map((p) => p.unit)).size };
     }
     const unitOf = Object.fromEntries(DS.units.map((u) => [u.id, u]));
     const cur = DS.people.filter((p) => p.is_current !== false && (p.person_type === "owner" || p.person_type === "tenant"));
@@ -2177,6 +2226,21 @@ if (DEMO_MODE) {
     return { ok: true, sent: r.emailable, people: r.count, noEmail: r.no_email };
   };
   listAnnouncementSends = async (_b, aid) => (DS.sends || []).filter((s) => s.announcement_id === aid);
+  listCommitteeNotices = async () => {
+    if (!DS.cnotices) DS.cnotices = [
+      { id: id(), title: "Meeting Tuesday 7pm, level 1 lounge", body: "Agenda:\n- Pool resurfacing quotes (three received)\n- Lot 12 parking breach, second notice\n- Budget for the next levy period\n\nPapers are in **Documents**, under Governance.", audience: "committee", emailed_detail: true, emailed_count: 4, created_by_name: "Lena Marsh", created_at: daysAgo(2) },
+      { id: id(), title: "Lift 2 service contract: decision needed before Friday", body: "The contractor has offered a three-year term at the current rate. We need a decision this week or the quote lapses.", audience: "committee_bm", emailed_detail: false, emailed_count: 5, created_by_name: "Theo Cole", created_at: daysAgo(6) },
+    ];
+    return [...DS.cnotices];
+  };
+  createCommitteeNotice = async (_b, n) => {
+    await listCommitteeNotices();
+    const row = { id: id(), title: n.title, body: n.body, audience: n.shareWithBm ? "committee_bm" : "committee",
+      emailed_detail: !!n.emailedDetail, emailed_count: 0, created_by_name: n.postedBy || "You", created_at: now() };
+    DS.cnotices.unshift(row);
+    return row;
+  };
+  deleteCommitteeNotice = async (_b, cid) => { await listCommitteeNotices(); DS.cnotices = DS.cnotices.filter((x) => x.id !== cid); };
   ensureBuildingMailbox = async () => ({ slug: null, address: null, existing: false });
   sendCorrespondence = async (payload) => {
     const p = payload || {};

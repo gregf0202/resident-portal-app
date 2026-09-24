@@ -3,7 +3,7 @@
 *The running record of what NaloHub does, what's just been built, and what's on the
 horizon. Written for people, not developers — one line per feature, no jargon.*
 
-**Last updated: 22 September 2026** · Maintained at every stage of development.
+**Last updated: 24 September 2026** · Maintained at every stage of development.
 
 > _**The working master is `claude/FEATURE_REGISTER.md` in the app repo** — alongside
 > `ARCHITECTURE.md`. Edit it there, commit it with the change, and in the same session push it
@@ -66,7 +66,11 @@ Everything a building gets on day one. Listed in the order it was built.
 
 ---
 
-## 2 · Built in the last four weeks *(mid August → 22 September 2026)*
+## 2 · Built in the last four weeks *(mid August → 24 September 2026)*
+- **Committee Notices** *(24 September, v0.39.0)*: the committee gets its own board, separate from Announcements. Owners and tenants cannot see it, and neither can your building manager unless you tick "Share with the building manager" on that notice. The email is a nudge: the title and a button that opens NaloHub, with the detail kept in the app. Tick "Include the detail in the email" for the routine ones, like a meeting reminder. Announcements now means one thing: to residents.
+- **You decide what your building manager can see** *(24 September, v0.39.0)*: Correspondence, the building's email record, used to be open to every building manager with no way to change it. Settings now has a "Your building manager" card, and Correspondence is off unless your committee switches it on. Buildings run by their manager keep it. Documents needed no change: a manager only ever saw the documents marked for everyone.
+- **Managing agents can be told** *(24 September, v0.39.0)*: the agent on each tenanted lot is now an audience of its own, taken from the unit record, with one email per agency however many lots it holds. Curve has eleven agencies across twelve lots, and until now there was no way to reach any of them from NaloHub.
+- **One notice, several groups** *(24 September, v0.39.0)*: "Send to" is now a list of tick boxes instead of a dropdown, so a notice can go to Tenants and Managing agents together, or a saved list plus the committee. Anyone in two groups is emailed once, and the line underneath shows the combined total.
 - **Notice emails that look like they come from your building** *(22 September, v0.38.0)*: a notice email used to be plain text in a plain box. It now opens with the building's own logo and name on a navy band with the NaloHub wave along its foot, is signed by the person who posted it with their role, and ends with a small, faded "Powered by NaloHub". Buildings without a logo get their initials instead.
 - **The building's address, impossible to miss** *(22 September, v0.38.0)*: every notice shows the building's email address three times: a strip under the header, a highlighted box asking residents to save it to their contacts, and a Reply to your committee button. Getting a building to use a new address takes months; every notice now helps.
 - **Bold, lists and links in notices** *(22 September, v0.38.0)*: B, List and Link buttons above the notice text, or type **bold** and a dash for a bullet. Web and email addresses become links on their own. The same formatting shows in the app and in the email, and nothing typed can slip code into either.
@@ -214,6 +218,7 @@ Everything a building gets on day one. Listed in the order it was built.
 | 3–4 September | **Know who is actually using it** | Usage analytics Layer 1: daily presence per building, per role, with a phone-or-computer marker; weekly and date-range reports; committees never see individual login times |
 | 22 September | **Reach everyone, on purpose** | v0.37.0: notices drawn from the unit register, not app sign-ups (1 reachable at Curve became 98) · Residents, Tenants and Owners who live elsewhere · Lives here on every owner · saved and rule-based distribution lists · a send record on every notice |
 | 22 September | **Sound like the building** | v0.38.0: notice emails carry the building's logo and name, the poster's signature, the building address three times, safe bold/lists/links, a preview before sending, and a quiet Powered by NaloHub |
+| 24 September | **Right people, right room** | v0.39.0: Committee Notices, committee-only and invisible to residents · the building manager's access to Correspondence becomes the committee's choice · managing agents reachable at last · several audiences in one notice |
 | 4 September | **Get everyone in** | v0.31.0: a code alongside the sign-in link, so the wrong device, a mail scanner or an in-app browser can no longer lock someone out · the "Getting into NaloHub on your phone" guide |
 | 5 September | **Meet the phone they actually have** | v0.31.3: Add to Home Screen steps describe what the person sees (Share icon, or "..." then Share) instead of naming an iOS version · v0.31.2: the update banner finally runs in production, not just the demo · v0.31.1: printable guides carry the logo once |
 | 7 September | **Three things that lift monthly opens** | Agreed and sequenced: Building calendar feed · Quick Polls · Neighbour helpers board, then Interest circles once the data shows which circles form |

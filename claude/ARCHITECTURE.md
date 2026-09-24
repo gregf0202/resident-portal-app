@@ -2,7 +2,10 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-22 · App version: v0.38.0 (notice emails: one shared template `noticeEmail.js`,
+> Last updated: 2026-09-24 · App version: v0.39.0 (Committee Notices with their own table and RLS
+> (0032), building-manager access to Correspondence becomes a per-building switch (0032, 0033),
+> committee audiences, Managing agents, and several audiences in one notice (0034, 0036),
+> send-announcement v11; v0.38.0 notice emails: one shared template `noticeEmail.js`,
 > building logo header, prominent reply address, low-res hosted images in `email-assets` (0031),
 > safe **bold**/list/link formatting, send-announcement v8; v0.37.0 broadcast audiences: notices resolved from the unit
 > register via `broadcast_recipients()` (0029, 0030), Residents / Tenants / Owners who live elsewhere,
@@ -524,6 +527,65 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.39.0: committee-to-committee, and who the building manager can see (24 Sep 2026)
+
+Migrations `0032_committee_notices_and_bm_access`, `0033_corr_manager_msc_follows_toggle`,
+`0034_broadcast_committee_audiences`, `0035_committee_notices_msc_members`,
+`0036_agents_audience_and_multi_select`; edge function `send-announcement` v10 and v11 (deployed
+24 Sep); `src/ResidentPortal.jsx`, `src/db.js`, `src/noticeEmail.js` (template v3). Demo and
+production builds green; roles exercised in a headless browser.
+
+**Announcements now means "to residents".** Committee-to-committee moved out of it into
+**Committee Notices**, its own screen and its own table. It is not the announcements jsonb store:
+a resident calling the API directly can read that store, so a committee note kept there would be
+private only by politeness. `committee_notices` has RLS instead: committee members read and post,
+and the building manager sees a row only where `audience = 'committee_bm'`, which is what the
+"Share with the building manager" tick sets. Off by default, because plenty of committee notes are
+about the manager's work rather than for them.
+
+**Email is a nudge, not a copy.** A committee notice defaults to `linkOnly`: title, one line and
+an Open in NaloHub button, with the detail left in the app. Template v3 adds `linkOnly`, `openUrl`,
+`privateNote` and `whyLine` (the footer's "you're on the register" line is the wrong reason for a
+notice that went to a role), and suppresses the Reply button when Open in NaloHub is present so
+there is one primary action. "Include the detail in the email" is a per-notice tick for the routine
+notes. This is deliberate: a full-content email of a note naming a resident forwards in one tap and
+lands in Correspondence, where the manager may sit.
+
+**Committee audiences** `committee` and `committee_bm` resolve from `memberships`, never the
+register, so they follow whoever holds the role after an AGM. Only a committee member may send to
+them (checked in the function as well as the UI). Curve: 7 committee, 8 with the manager.
+
+**Building-manager access.** `CORR_ALLOW_BM` was a constant in `ResidentPortal.jsx`, true for every
+building, with no way for a committee to turn it off. It is now `buildings.data.bmCorrespondence`,
+default off, enforced by `corr_is_committee()` and surfaced in Settings under "Your building
+manager" beside the existing unit-register switch. Buildings with a manager and no committee on the
+app (Regatta Waterfront, On The River) were set to true by the migration so they kept what they had.
+Documents needed no change: a manager already sees only documents marked for everyone, never the
+committee-only or owners-only ones.
+
+**Two findings while building it.**
+1. A manager carrying `msc` would have walked straight past the new switch, because
+   `corr_is_committee` treated any `msc = true` as committee. 0033 excludes managers from that
+   bypass: msc means an OWNER who sits on the committee.
+2. The reverse case: an owner carrying `msc` IS a committee member and was already being emailed
+   committee notices by `broadcast_recipients`, but `is_committee()` (bcc/admin only) would have
+   refused to let them open one. 0035 adds `is_committee_member()` and uses it for the notice
+   policies; the app's `isCommitteeMember()` mirrors it.
+
+**Managing agents** become an audience (0036): `units.agent_email` plus Managing agent contacts on
+the register, de-duplicated on email, so an agency holding four lots is emailed once. Curve has 11
+agencies across 12 tenanted lots and no way to reach any of them until now.
+
+**Several audiences in one notice.** "Send to" is now tick boxes, not a dropdown, and
+`broadcast_recipients(..., p_audiences jsonb)` resolves each token (including `list:<uuid>` and
+`specific`) and merges them on email, so someone in two groups is emailed once. Tenants + Managing
+agents at Curve is 37 people, which is 26 + 11. The single-audience signature is gone; the
+four-argument overload was dropped in the same migration, so the app and the function must ship
+together.
+
+**Known gap.** An announcement sent to several groups fixes its in-app visibility to the app
+members it reached at send time, like a saved list, rather than recomputing per reader.
 
 ### v0.38.0: notice emails that look like the building sent them (22 Sep 2026)
 

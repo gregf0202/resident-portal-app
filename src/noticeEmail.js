@@ -13,7 +13,7 @@
 // so nothing a poster types can inject HTML into an email or the app.
 // No dependencies: plain JS that runs in the browser and in Deno.
 // ============================================================================
-export const NOTICE_EMAIL_VERSION = "2";
+export const NOTICE_EMAIL_VERSION = "3";
 
 const NAVY = "#0B1F3A";
 const INK = "#1F2937";
@@ -100,12 +100,17 @@ export function blocksText(blocks) {
 // ---- the email ------------------------------------------------------------
 // opts: { buildingName, buildingInitials, logoUrl, title, body, noticeType,
 //         photoUrl, posterName, posterRole, replyAddress, audienceLabel,
-//         dateLabel, nalohubMarkUrl, waveUrl }
+//         dateLabel, nalohubMarkUrl, waveUrl, openUrl, linkOnly, privateNote, whyLine }
+// linkOnly: a committee notice emailed as a nudge. The detail stays in the app:
+// the email carries the title, a line of context and an Open in NaloHub button.
+// privateNote: the "only your committee can see this" line under the body.
+// whyLine: replaces the footer's "you're on the register for X" explanation,
+// which is the wrong reason for a notice that went to a role.
 // waveUrl: the NaloHub wave, a 1200x64 PNG (about 1 KB) pre-painted on navy, shown
 // at 600x32 along the bottom of the header. If images are blocked the row stays navy.
 export function noticeHtml(o) {
-  const blocks = parseNotice(o.body);
-  const first = blocksText(blocks).split("\n")[0] || "";
+  const blocks = o.linkOnly ? [] : parseNotice(o.body);
+  const first = o.linkOnly ? "Open NaloHub to read it." : (blocksText(blocks).split("\n")[0] || "");
   const bn = esc(o.buildingName || "Your building");
   const reply = o.replyAddress ? esc(o.replyAddress) : "";
   const mailto = o.replyAddress ? `mailto:${esc(o.replyAddress)}?subject=${encodeURIComponent("Re: " + (o.title || ""))}` : "";
@@ -116,6 +121,12 @@ export function noticeHtml(o) {
   const photo = o.photoUrl
     ? `<tr><td style="padding:0 28px 18px"><img src="${esc(o.photoUrl)}" width="544" alt="Photo with this notice" style="display:block;width:100%;max-width:544px;height:auto;border-radius:10px;border:0"></td></tr>` : "";
   const role = o.posterRole ? ` · ${esc(o.posterRole)}` : "";
+  const openBtn = o.openUrl
+    ? `<tr><td style="padding:0 28px 22px"><a href="${esc(o.openUrl)}" style="display:inline-block;background:${NAVY};color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;padding:12px 20px;border-radius:8px">Open in NaloHub</a></td></tr>` : "";
+  const lead = o.linkOnly
+    ? `<p style="margin:0 0 14px;font-size:16px;line-height:1.55;color:${INK}">There is a new note for the committee in NaloHub. The detail is kept in the app, where only the committee can read it.</p>` : "";
+  const privateLine = o.privateNote
+    ? `<tr><td style="padding:0 28px 18px"><div style="font-size:13px;line-height:1.45;color:${MUTED}">${esc(o.privateNote)}</div></td></tr>` : "";
   const replyBar = reply ? `
   <tr><td style="padding:0 28px 22px">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${REPLY_BG};border:1px solid ${REPLY_LINE};border-radius:10px">
@@ -126,7 +137,8 @@ export function noticeHtml(o) {
       </td></tr>
     </table>
   </td></tr>` : "";
-  const button = reply ? `
+  // One primary button only: Open in NaloHub wins when the detail is in the app.
+  const button = reply && !o.openUrl ? `
   <tr><td style="padding:0 28px 26px">
     <a href="${mailto}" style="display:inline-block;background:${NAVY};color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;padding:12px 20px;border-radius:8px">Reply to your committee</a>
   </td></tr>` : "";
@@ -149,8 +161,10 @@ export function noticeHtml(o) {
   ${o.waveUrl ? `<tr><td height="32" style="background:${NAVY};padding:0;line-height:0;font-size:0"><img src="${esc(o.waveUrl)}" width="600" height="32" alt="" style="display:block;width:100%;max-width:600px;height:32px;border:0"></td></tr>` : ""}
   ${reply ? `<tr><td style="background:${REPLY_BG};border-bottom:1px solid ${REPLY_LINE};padding:9px 28px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.4;color:${REPLY_INK}">Replies go to <a href="${mailto}" style="color:${REPLY_INK};font-weight:700;text-decoration:none">${reply}</a>. Save it to your contacts.</td></tr>` : ""}
   <tr><td style="padding:26px 28px 6px"><h1 style="margin:0 0 14px;font-size:22px;line-height:1.3;color:${NAVY};font-family:Arial,Helvetica,sans-serif">${esc(o.title)}</h1></td></tr>
-  <tr><td style="padding:0 28px 6px;font-family:Arial,Helvetica,sans-serif">${blocksHtml(blocks)}</td></tr>
+  <tr><td style="padding:0 28px 6px;font-family:Arial,Helvetica,sans-serif">${lead}${blocksHtml(blocks)}</td></tr>
   ${photo}
+  ${openBtn}
+  ${privateLine}
   <tr><td style="padding:4px 28px 22px;font-family:Arial,Helvetica,sans-serif">
     <div style="border-top:1px solid ${LINE};padding-top:14px">
       <div style="font-size:15px;line-height:1.4;color:${INK};font-weight:700">${esc(o.posterName || "Your committee")}</div>
@@ -160,7 +174,7 @@ export function noticeHtml(o) {
   ${replyBar}
   ${button}
   <tr><td style="background:#F9FAFB;border-top:1px solid ${LINE};padding:14px 28px;font-family:Arial,Helvetica,sans-serif">
-    <div style="font-size:12px;line-height:1.5;color:${MUTED}">You're receiving this because you're on the register for ${bn}${o.audienceLabel ? ` and this notice was sent to ${esc(o.audienceLabel)}` : ""}.</div>
+    <div style="font-size:12px;line-height:1.5;color:${MUTED}">${o.whyLine ? esc(o.whyLine) : `You're receiving this because you're on the register for ${bn}${o.audienceLabel ? ` and this notice was sent to ${esc(o.audienceLabel)}` : ""}.`}</div>
     <div style="font-size:11px;line-height:1.5;color:#9CA3AF;margin-top:8px">${powered}</div>
   </td></tr>
 </table>
@@ -169,7 +183,9 @@ export function noticeHtml(o) {
 }
 
 export function noticeText(o) {
-  const body = blocksText(parseNotice(o.body));
+  const body = o.linkOnly
+    ? `There is a new note for the committee in NaloHub. The detail is kept in the app, where only the committee can read it.${o.openUrl ? `\n\nOpen NaloHub: ${o.openUrl}` : ""}`
+    : blocksText(parseNotice(o.body)) + (o.openUrl ? `\n\nOpen NaloHub: ${o.openUrl}` : "");
   const reply = o.replyAddress ? `\n\nYOUR BUILDING'S EMAIL ADDRESS: ${o.replyAddress}\nReply to this email and it reaches your committee. Save this address to your contacts so building emails land in your inbox, not junk.` : "";
-  return `${o.buildingName || "Your building"}\n${o.noticeType && o.noticeType !== "General" ? o.noticeType : "Notice from your building"}\n\n${o.title || ""}\n\n${body}\n\n${o.posterName || "Your committee"}\n${o.buildingName || ""}${o.posterRole ? " · " + o.posterRole : ""}${reply}\n\nYou're receiving this because you're on the register for ${o.buildingName || "your building"}${o.audienceLabel ? ` and this notice was sent to ${o.audienceLabel}` : ""}.\nPowered by NaloHub`;
+  return `${o.buildingName || "Your building"}\n${o.noticeType && o.noticeType !== "General" ? o.noticeType : "Notice from your building"}\n\n${o.title || ""}\n\n${body}\n\n${o.posterName || "Your committee"}\n${o.buildingName || ""}${o.posterRole ? " · " + o.posterRole : ""}${o.privateNote ? "\n\n" + o.privateNote : ""}${reply}\n\n${o.whyLine || `You're receiving this because you're on the register for ${o.buildingName || "your building"}${o.audienceLabel ? ` and this notice was sent to ${o.audienceLabel}` : ""}.`}\nPowered by NaloHub`;
 }

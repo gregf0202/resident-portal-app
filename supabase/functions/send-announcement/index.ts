@@ -23,6 +23,16 @@
 // logo and notice photo arrive from the app already downscaled (logo 96px PNG,
 // photo 720px JPEG) and are stored in the public email-assets bucket, because
 // mail apps block data: URLs. The NaloHub mark is a 1.5 KB file on the portal.
+//
+// v10 (0.39.0): committee audiences. "committee" and "committee_bm" resolve from
+// memberships (the role), never the register. A committee notice defaults to
+// linkOnly: the email carries the title and an Open in NaloHub button, and the
+// detail stays in the app where RLS keeps residents out. Pass linkOnly false to
+// put the detail in the email as well.
+//
+// v11 (0.39.0): "agents" (managing agents, from the unit record and the register,
+// one email per agency) and `audiences: [...]`, several groups in one notice,
+// merged and de-duplicated by broadcast_recipients (0036).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { noticeHtml, noticeText } from "./noticeEmail.js";
@@ -32,6 +42,7 @@ import { noticeHtml, noticeText } from "./noticeEmail.js";
 const NALOHUB_MARK_URL = "https://portal.nalohub.com/email/nalohub-mark.png";
 // The NaloHub wave along the bottom of the header, 1200x64 PNG on navy, about 1 KB (v9).
 const NALOHUB_WAVE_URL = "https://portal.nalohub.com/email/nalohub-wave.png";
+const PORTAL_URL = "https://portal.nalohub.com";
 const ASSET_BUCKET = "email-assets";
 const MAX_IMG = 300 * 1024;
 const ROLE_LABEL: Record<string, string> = { bcc: "Committee", admin: "Admin", manager: "Building manager", strata: "Strata manager" };
@@ -75,7 +86,7 @@ Deno.serve(async (req) => {
 
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-  const { buildingId, subject, bodyText, audience, recipientIds, people, listId, announcementId, noticeType, images } = body || {};
+  const { buildingId, subject, bodyText, audience, audiences, recipientIds, people, listId, announcementId, noticeType, images } = body || {};
   if (!buildingId) return json({ error: "buildingId required" }, 400);
   if (!subject) return json({ error: "subject required" }, 400);
 
@@ -83,19 +94,32 @@ Deno.serve(async (req) => {
 
   // --- Authorization: caller must be committee / strata / manager of building --
   const { data: mine } = await db.from("memberships")
-    .select("role, status, full_name").eq("building_id", buildingId).eq("user_id", uid).maybeSingle();
+    .select("role, status, full_name, msc").eq("building_id", buildingId).eq("user_id", uid).maybeSingle();
   const posterRole = mine?.role;
   if (!mine || mine.status !== "active" || !["admin", "bcc", "strata", "manager"].includes(posterRole)) {
     return json({ error: "Not permitted for this building" }, 403);
   }
 
   // --- Resolve recipients server-side from the register + app members -------
-  const aud = audience || "all";
-  if (!["all", "residents", "owners", "tenants", "offsite", "list", "specific"].includes(aud)) return json({ error: "unknown audience" }, 400);
+  const AUDS = ["all", "residents", "owners", "tenants", "offsite", "agents", "list", "specific", "committee", "committee_bm"];
+  const multi: string[] = Array.isArray(audiences) ? audiences.filter((t: unknown) => typeof t === "string") : [];
+  const bad = multi.find((t) => !AUDS.includes(t) && !/^list:[0-9a-f-]{36}$/i.test(t));
+  if (bad) return json({ error: "unknown audience", detail: bad }, 400);
+  const aud = multi.length === 1 ? multi[0].replace(/^list:.*/, "list") : (multi.length > 1 ? "multi" : (audience || "all"));
+  const singleList = multi.length === 1 && multi[0].startsWith("list:") ? multi[0].slice(5) : listId;
+  if (aud !== "multi" && !AUDS.includes(aud)) return json({ error: "unknown audience" }, 400);
+  const isCommitteeAud = aud === "committee" || aud === "committee_bm"
+    || multi.some((t) => t === "committee" || t === "committee_bm");
+  // Only the committee may send to the committee.
+  if (isCommitteeAud && !["admin", "bcc"].includes(posterRole) && mine.msc !== true) {
+    return json({ error: "Only the committee can send committee notices" }, 403);
+  }
   const keys = Array.isArray(people) && people.length ? people
     : (Array.isArray(recipientIds) ? recipientIds.map((id: string) => "m:" + id) : []);
   const { data: resolved, error: rErr } = await db.rpc("broadcast_recipients", {
-    p_building: buildingId, p_audience: aud, p_list: aud === "list" ? listId : null, p_people: keys,
+    p_building: buildingId, p_audience: aud === "multi" ? null : aud,
+    p_list: aud === "list" ? singleList : null, p_people: keys,
+    p_audiences: multi.length > 1 ? multi : null,
   });
   if (rErr) return json({ error: "could not resolve recipients", detail: rErr.message }, 400);
   const folks: any[] = resolved?.people || [];
@@ -105,7 +129,7 @@ Deno.serve(async (req) => {
   const record = async (emailed: number) => {
     await db.from("announcement_sends").insert({
       building_id: buildingId, announcement_id: announcementId || null, subject, audience: aud,
-      list_id: aud === "list" ? listId : null, list_name: listName,
+      list_id: aud === "list" ? singleList : null, list_name: listName || (multi.length > 1 ? multi.join(", ") : null),
       recipients: folks.map((p) => ({ name: p.name, unit: p.unit, kind: p.kind, email: p.email || null })),
       people_count: folks.length, emailed_count: emailed, no_email_count: folks.length - emails.length, sent_by: uid,
     });
@@ -142,7 +166,11 @@ Deno.serve(async (req) => {
 
   if (!RESEND_API_KEY) return json({ ok: false, sent: 0, error: "email provider not configured" }, 200);
 
-  const audLabel = ({ all: "owners and tenants", residents: "residents", owners: "owners", tenants: "tenants", offsite: "owners who live elsewhere", specific: "selected people" } as Record<string, string>)[aud] || (listName ? `the ${listName} list` : "residents");
+  const LABELS: Record<string, string> = { all: "owners and tenants", residents: "residents", owners: "owners", tenants: "tenants", offsite: "owners who live elsewhere", agents: "managing agents", specific: "selected people", committee: "your committee", committee_bm: "your committee and building manager" };
+  const label1 = (t: string) => t.startsWith("list:") ? "a saved list" : (LABELS[t] || t);
+  const audLabel = aud === "multi"
+    ? multi.map(label1).filter((v, i, a) => a.indexOf(v) === i).join(", ").replace(/, ([^,]*)$/, " and $1")
+    : (LABELS[aud] || (listName ? `the ${listName} list` : "residents"));
 
   // --- Low-res images, hosted so mail apps will show them ----------------------
   const store = db.storage.from(ASSET_BUCKET);
@@ -162,6 +190,17 @@ Deno.serve(async (req) => {
     buildingName, buildingInitials: b?.data?.logoText || "", logoUrl, title: subject, body: bodyText || "",
     noticeType: noticeType || "General", photoUrl, posterName, posterRole: ROLE_LABEL[posterRole] || "",
     replyAddress: replyTo || "", audienceLabel: audLabel, dateLabel, nalohubMarkUrl: NALOHUB_MARK_URL, waveUrl: NALOHUB_WAVE_URL,
+    ...(isCommitteeAud ? {
+      noticeType: noticeType || "Committee note",
+      openUrl: PORTAL_URL,
+      linkOnly: body?.linkOnly !== false,
+      privateNote: aud === "committee_bm"
+        ? "Only your committee and your building manager can see this note in NaloHub."
+        : "Only your committee can see this note in NaloHub. Owners and tenants cannot.",
+      whyLine: aud === "committee_bm"
+        ? `You're receiving this because you're on the committee for ${buildingName}, or you manage it.`
+        : `You're receiving this because you're on the committee for ${buildingName}.`,
+    } : {}),
   };
   const html = noticeHtml(tpl);
   const text = noticeText(tpl);
