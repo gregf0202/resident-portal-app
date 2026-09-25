@@ -2,7 +2,8 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-25 · App version: v0.39.2 (Home Screen app picks up the browser's sign-in
+> Last updated: 2026-09-25 · App version: v0.40.0 (Unit Search Investor dot for owners who live elsewhere,
+> `unit_people.home_address` (0037); v0.39.2 Home Screen app picks up the browser's sign-in
 > via a one-time hand-off, edge function `session-handoff` v1; v0.39.1 Home Screen sign-in leads with the code and
 > survives a reload; Supabase Magic Link and Confirm signup emails rebranded; v0.39.0 Committee Notices with their own table and RLS
 > (0032), building-manager access to Correspondence becomes a per-building switch (0032, 0033),
@@ -418,7 +419,10 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.39.2 (current, 25 Sep 2026):** Home Screen hand-off. The browser keeps its access token
+- **v0.40.0 (current, 25 Sep 2026):** Unit Search marks owners who live elsewhere with a purple
+  Investor dot (display flag, not a person type) and records their home or business address in
+  new `unit_people.home_address` (0037). See changelog.
+- **v0.39.2 (25 Sep 2026):** Home Screen hand-off. The browser keeps its access token
   in cookie `nh_handoff`; iOS 17.2+ copies cookies into a new Home Screen app, which trades it
   once for its own session via edge function `session-handoff`. See changelog.
 - **v0.39.1 (25 Sep 2026):** Home Screen sign-in. `SignIn.jsx` detects standalone
@@ -539,6 +543,37 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.40.0: owners who live elsewhere, shown as Investor, with an address (25 Sep 2026)
+
+`src/ResidentPortal.jsx` (UnitSearchView, a module-level `InvestorDot`, version line) +
+`src/db.js` (`listUnitsOverview` live and demo, demo people) + migration 0037. Demo and
+production builds green; demo driven headless: legend, filter, "investor" search, dot on the
+unit record, address shown, edited and saved, no dot on an owner-occupied unit, no page errors.
+
+- **Why.** BCC members call non-resident owners "Investors". Greg's position: they are Owners
+  who are not residents. Compromise: the committee's word appears, but as a display flag
+  beside the correct term ("Owner, lives elsewhere (Investor)"), never as a category.
+  `person_type` stays `owner`; votes, levies and notices are unchanged.
+- **Rule.** Identical to the v0.37.0 Lives here pill and `broadcast_recipients`: investor when
+  `lives_here = false`, or `lives_here` is null and the lot has a current tenant. Confirmed and
+  assumed get the same solid dot (Greg, 25 Sep: a tenant is a solid assumption). The tooltip on
+  the unit record says when it is assumed.
+- **Where it shows.** Before the owner's name on the unit record; before each owner in the
+  Browse list (`listUnitsOverview` now returns `ownerAway[]`, parallel to `owners[]`, and
+  selects `lives_here`); a legend line "Owner, lives elsewhere (Investor): N units" that toggles
+  the list filter; `isInvestorQuery` makes "inv", "investor", "investors" filter the list, and
+  `run()` intercepts it so Search no longer offers to create a unit called "investor".
+- **`unit_people.home_address text` (0037).** The QLD roll requires each owner's residential
+  or business address; for an off-site owner the register had nowhere to put it. Owner-only
+  field on add and edit, shown as "Address: ..." in the row detail. Privacy needs no new
+  policy: `unit_people` is readable only via `unit_people_committee` (`can_edit_unit_registry`)
+  and `unit_health_check` is SECURITY INVOKER, so the address reaches exactly the people who
+  can edit the register. Returned automatically by `to_jsonb(p)`.
+- **Not built (deferred):** a separate *address for service* (one per lot, may be an email)
+  distinct from the home address. See Feature Register §3.
+- **Curve at release:** 18 owner rows across 12 units carry the dot; 1 confirmed, the rest
+  assumed from a current tenant.
 
 ### v0.39.2: the Home Screen app picks up the browser's sign-in (25 Sep 2026)
 

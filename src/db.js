@@ -452,7 +452,7 @@ export async function listUnitsOverview(bid) {
   const ids = (units || []).map((u) => u.id);
   if (!ids.length) return [];
   const [ppl, pets, veh, keys] = await Promise.all([
-    supabase.from("unit_people").select("unit_id, person_type, full_name, is_current").in("unit_id", ids),
+    supabase.from("unit_people").select("unit_id, person_type, full_name, is_current, lives_here").in("unit_id", ids),
     supabase.from("unit_pets").select("unit_id").in("unit_id", ids),
     supabase.from("unit_vehicles").select("unit_id").in("unit_id", ids),
     supabase.from("unit_access_items").select("unit_id").eq("building_id", bid),
@@ -464,7 +464,11 @@ export async function listUnitsOverview(bid) {
   return units.map((u) => {
     const people = byUnit[u.id] || [];
     const pick = (t) => people.filter((p) => p.person_type === t).map((p) => p.full_name);
-    return { ...u, owners: pick("owner"), tenants: pick("tenant"), others: pick("property_manager").concat(pick("emergency_contact")),
+    // ownerAway runs parallel to owners: true = lives elsewhere (Investor dot). Blank
+    // lives_here follows the tenancy, the same rule as the Lives here pill (0.40.0).
+    const tenanted = people.some((p) => p.person_type === "tenant");
+    const ownerAway = people.filter((p) => p.person_type === "owner").map((p) => p.lives_here == null ? tenanted : !p.lives_here);
+    return { ...u, owners: pick("owner"), ownerAway, tenants: pick("tenant"), others: pick("property_manager").concat(pick("emergency_contact")),
       pets: nPets[u.id] || 0, vehicles: nVeh[u.id] || 0, keys: nKeys[u.id] || 0 };
   });
 }
@@ -1753,7 +1757,7 @@ if (DEMO_MODE) {
     ["2",  "tenant", "Sinead Fitzgerald","sinead.fitz@example.com",     "0403 118 777", { moved: "2025-03-01" }],
     ["3",  "owner",  "Marcus Oyelaran",  "m.oyelaran@example.com",      "0404 662 019", { app: "email" }],
     ["3",  "owner",  "Justine Oyelaran", "j.oyelaran@example.com",      "0404 662 020", {}],
-    ["7",  "owner",  "Wei Lin Tan",      "weilin.tan@example.com",      "0405 330 921", { note: "Contact by email only — different time zone" }],
+    ["7",  "owner",  "Wei Lin Tan",      "weilin.tan@example.com",      "0405 330 921", { note: "Contact by email only, different time zone", addr: "88 Orchard Road, #12-04, Singapore 238839" }],
     ["7",  "tenant", "Bridget Halloran", "b.halloran@example.com",      "0405 774 118", { moved: "2024-11-18" }],
     ["8",  "owner",  "Grant Petrakis",   "g.petrakis@example.com",      "0406 200 553", {}],
     ["8",  "tenant", "Amara Nwosu",      "amara.nwosu@example.com",     "0406 918 224", { moved: "2026-01-12", note: "Works night shift — no calls before 11am" }],
@@ -1773,7 +1777,7 @@ if (DEMO_MODE) {
     ["19", "tenant", "Dmitri Volkov",    "d.volkov@example.com",        "0412 118 447", { moved: "2025-07-01" }],
     ["24", "owner",  "Lachlan Pereira",  "l.pereira@example.com",       "0413 662 118", {}],
     ["24", "owner",  "Camila Pereira",   "c.pereira@example.com",       "0413 662 119", { app: "email" }],
-    ["25", "owner",  "Yusuf Demirel",    "y.demirel@example.com",       "0414 330 992", { away: true }],
+    ["25", "owner",  "Yusuf Demirel",    "y.demirel@example.com",       "0414 330 992", { away: true, addr: "PO Box 412, Toowong QLD 4066" }],
     ["25", "tenant", "Georgia Hollis",   "g.hollis@example.com",        "0414 771 118", { moved: "2024-05-20", note: "Renewed 12 months from May 2026" }],
     ["27", "owner",  "Beatrice Nkemdi",  "b.nkemdi@example.com",        "0415 226 774", { moved: "2018-10-03" }],
     ["30", "owner",  "Duncan Fairweather","d.fairweather@example.com",  "0416 118 553", { note: "Accessible bay allocated" }],
@@ -1841,7 +1845,8 @@ if (DEMO_MODE) {
       const rec = { id: id(), unit_id: "unit-" + u, person_type: t, full_name: name, email: email || null, phone, is_current: true };
       if (x.moved) rec.move_in = x.moved;
       if (x.note) rec.notes = x.note;
-      if (x.away) rec.notes = "Non-resident owner — investment lot";
+      if (x.away) { rec.lives_here = false; rec.home_address = x.addr || "14 Kingfisher Parade, Buderim QLD 4556"; }
+      if (x.addr && !x.away) rec.home_address = x.addr;
       if (x.app === "email") rec.app_match = { match: "email", role: t, status: "active", full_name: name, email };
       if (x.app === "name") rec.app_match = { match: "name", role: t, status: "active", full_name: name, email: "r.ashcroft@oldmail.example.com" };
       people.push(rec);
@@ -1998,7 +2003,9 @@ if (DEMO_MODE) {
       .map((u) => {
         const people = DS.people.filter((p) => p.unit_id === u.id && p.is_current !== false);
         const pick = (t) => people.filter((p) => p.person_type === t).map((p) => p.full_name);
-        return { ...u, owners: pick("owner"), tenants: pick("tenant"), others: pick("property_manager").concat(pick("emergency_contact")),
+        const tenanted = people.some((p) => p.person_type === "tenant");
+        const ownerAway = people.filter((p) => p.person_type === "owner").map((p) => p.lives_here == null ? tenanted : !p.lives_here);
+        return { ...u, owners: pick("owner"), ownerAway, tenants: pick("tenant"), others: pick("property_manager").concat(pick("emergency_contact")),
           pets: n(DS.pets, u.id), vehicles: n(DS.vehicles, u.id), keys: n(DS.access, u.id) };
       });
   };
