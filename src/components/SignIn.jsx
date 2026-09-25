@@ -4,9 +4,41 @@ import { T } from "../theme.js";
 import AnimatedHeader from "./AnimatedHeader.jsx";
 import { Btn, Input } from "./ui.jsx";
 
+// Running from the Home Screen (iPhone or Android). This matters at sign-in:
+// the Sign in button in the email always opens the phone's browser, never the
+// Home Screen app, and the two keep separate sign-ins. So a resident who taps
+// the link signs the browser in, taps the NaloHub icon, and is asked for their
+// email again. The code is the only way to sign the Home Screen app itself in,
+// so in that mode we say so, and lead with the code.
+const isStandalone = () => {
+  try {
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+      || window.navigator.standalone === true;
+  } catch (e) { return false; }
+};
+
+// "Waiting for the code" survives the app being reloaded. Switching to Mail to
+// read the code often makes iOS reload a Home Screen app when the person comes
+// back, which used to drop them on the empty email screen with the code in
+// hand. Kept for the life of a code (30 min, Supabase OTP expiry), per device.
+const PENDING_KEY = "nalo_signin_pending";
+const PENDING_MS = 30 * 60 * 1000;
+const readPending = () => {
+  try {
+    const v = JSON.parse(localStorage.getItem(PENDING_KEY) || "null");
+    if (v && v.email && Date.now() - v.at < PENDING_MS) return v;
+    localStorage.removeItem(PENDING_KEY);
+  } catch (e) {}
+  return null;
+};
+const savePending = (email) => { try { localStorage.setItem(PENDING_KEY, JSON.stringify({ email, at: Date.now() })); } catch (e) {} };
+const clearPending = () => { try { localStorage.removeItem(PENDING_KEY); } catch (e) {} };
+
 export default function SignIn() {
-  const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
+  const [standalone] = useState(isStandalone);
+  const [pending] = useState(readPending);
+  const [email, setEmail] = useState(pending ? pending.email : "");
+  const [sent, setSent] = useState(!!pending);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [usePw, setUsePw] = useState(false);
@@ -35,7 +67,7 @@ export default function SignIn() {
       options: { emailRedirectTo: window.location.origin },
     });
     setBusy(false);
-    if (error) setErr(error.message); else setSent(true);
+    if (error) setErr(error.message); else { savePending(email.trim()); setSent(true); }
   };
 
   // Verify the numeric code printed in the sign-in email. Works on whichever
@@ -61,7 +93,7 @@ export default function SignIn() {
         ? "That code didn't work. Check the digits, and make sure it's from the newest email. Codes expire, so if in doubt tap Send a fresh email."
         : error.message;
       setCodeErr(m);
-    }
+    } else clearPending();
     // On success onAuthStateChange in App.jsx takes over; nothing to do here.
   };
 
@@ -76,7 +108,7 @@ export default function SignIn() {
       options: { emailRedirectTo: window.location.origin },
     });
     setBusy(false);
-    if (!error) { setResent(true); setCode(""); return; }
+    if (!error) { savePending(email.trim()); setResent(true); setCode(""); return; }
     const wait = /security purposes|rate limit|only request this after/i.test(error.message);
     const secs = (error.message.match(/(\d+)\s*seconds?/i) || [])[1];
     setCodeErr(wait
@@ -109,11 +141,24 @@ export default function SignIn() {
           </div>
           {sent ? (
             <div>
-              <p style={{ color: T.text, marginTop: 0 }}>Check your email. We've sent a sign-in link to <b>{email}</b>.</p>
-              <p style={{ color: T.textMuted, marginTop: 6, fontSize: 14 }}>
-                <b style={{ color: T.text }}>Two ways in:</b> tap <b>Sign in</b> in that email on this device, or type the code from the email here. The code works on any device.
-              </p>
+              {standalone ? (
+                <>
+                  <p style={{ color: T.text, marginTop: 0 }}>Check your email. We've sent a sign-in code to <b>{email}</b>.</p>
+                  <p style={{ color: T.text, marginTop: 6, fontSize: 15, fontWeight: 700 }}>Type the code from that email here.</p>
+                  <p style={{ color: T.textMuted, marginTop: 4, fontSize: 13 }}>
+                    The Sign in button in the email opens your web browser, not this app, so this app would still ask for your email. The code signs this app in, and it stays signed in.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p style={{ color: T.text, marginTop: 0 }}>Check your email. We've sent a sign-in link to <b>{email}</b>.</p>
+                  <p style={{ color: T.textMuted, marginTop: 6, fontSize: 14 }}>
+                    <b style={{ color: T.text }}>Two ways in:</b> tap <b>Sign in</b> in that email on this device, or type the code from the email here. The code works on any device.
+                  </p>
+                </>
+              )}
               <Input
+                autoFocus={standalone}
                 type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code" maxLength={CODE_MAX + 2}
                 value={code} placeholder="Code from your email"
                 onChange={(e) => { setCode(e.target.value.replace(/[^0-9 ]/g, "")); setCodeErr(""); }}
@@ -130,7 +175,7 @@ export default function SignIn() {
                   style={{ background: "none", border: "none", color: T.textMuted, fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
                   Send a fresh email
                 </button>
-                <button onClick={() => { setSent(false); setEmail(""); setCode(""); setCodeErr(""); setResent(false); }}
+                <button onClick={() => { clearPending(); setSent(false); setEmail(""); setCode(""); setCodeErr(""); setResent(false); }}
                   style={{ background: "none", border: "none", color: T.textMuted, fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
                   Use a different email
                 </button>
@@ -164,13 +209,15 @@ export default function SignIn() {
                 </>
               ) : (
                 <>
-                  <p style={{ color: T.textMuted, marginTop: 0 }}>Enter your email and we'll send a secure sign-in link. No password to remember.</p>
+                  <p style={{ color: T.textMuted, marginTop: 0 }}>{standalone
+                    ? "Enter your email and we'll send you a sign-in code to type in here. No password to remember."
+                    : "Enter your email and we'll send a secure sign-in link. No password to remember."}</p>
                   <Input type="email" value={email} placeholder="you@example.com"
                     onChange={(e) => setEmail(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && send()} />
                   {err && <div style={{ color: "#f87171", fontSize: 13, marginTop: 8 }}>{err}</div>}
                   <Btn onClick={send} disabled={busy} style={{ marginTop: 12, width: "100%" }}>
-                    {busy ? "Sending…" : "Email me a sign-in link"}
+                    {busy ? "Sending…" : standalone ? "Email me a sign-in code" : "Email me a sign-in link"}
                   </Btn>
                 </>
               )}
