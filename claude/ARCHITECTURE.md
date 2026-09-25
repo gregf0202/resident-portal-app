@@ -2,7 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-24 · App version: v0.39.0 (Committee Notices with their own table and RLS
+> Last updated: 2026-09-25 · App version: v0.39.2 (Home Screen app picks up the browser's sign-in
+> via a one-time hand-off, edge function `session-handoff` v1; v0.39.1 Home Screen sign-in leads with the code and
+> survives a reload; Supabase Magic Link and Confirm signup emails rebranded; v0.39.0 Committee Notices with their own table and RLS
 > (0032), building-manager access to Correspondence becomes a per-building switch (0032, 0033),
 > committee audiences, Managing agents, and several audiences in one notice (0034, 0036),
 > send-announcement v11; v0.38.0 notice emails: one shared template `noticeEmail.js`,
@@ -416,7 +418,17 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.38.0 (current, 22 Sep 2026):** Notice emails look like they come from the building: shared
+- **v0.39.2 (current, 25 Sep 2026):** Home Screen hand-off. The browser keeps its access token
+  in cookie `nh_handoff`; iOS 17.2+ copies cookies into a new Home Screen app, which trades it
+  once for its own session via edge function `session-handoff`. See changelog.
+- **v0.39.1 (25 Sep 2026):** Home Screen sign-in. `SignIn.jsx` detects standalone
+  mode and leads with the code there; the waiting-for-code state survives an iOS reload
+  (`nalo_signin_pending`, 30 min). Magic Link and Confirm signup email templates rebranded.
+  See changelog.
+- **v0.39.0 (24 Sep 2026):** Committee Notices (own table, RLS), building-manager access to
+  Correspondence as a per-building switch, Managing agents audience, several audiences per
+  notice. See changelog.
+- **v0.38.0 (22 Sep 2026):** Notice emails look like they come from the building: shared
   template, logo header, reply address three times, low-res hosted images, safe formatting, a
   "See the email" preview (0031, send-announcement v8). See changelog.
 - **v0.37.0 (22 Sep 2026):** Broadcast audiences. Notices are resolved from the unit
@@ -527,6 +539,85 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.39.2: the Home Screen app picks up the browser's sign-in (25 Sep 2026)
+
+New `src/handoff.js`, `src/App.jsx`, version line in `src/ResidentPortal.jsx`; new edge function
+`supabase/functions/session-handoff` (v1, verify_jwt on, deployed 25 Sep). Production and demo
+builds green.
+
+**Why 0.39.1 was not enough.** Tested on an iPhone in the usual order: sign in in Safari (code),
+then Add to Home Screen, then tap the icon: sign-in screen. 0.39.1 only helped when the app was
+added first. Supabase keeps the session in localStorage, and iOS 17.2+ copies only **cookies**
+from the browser into a Home Screen app at the moment it is added (WebKit, Safari 17.2 notes).
+
+**Rejected: put the session in a cookie.** Both apps would then hold the same refresh token.
+Auth → Sessions has "Detect and revoke potentially compromised refresh tokens" ON with a 10s
+reuse interval, so whichever app refreshed second would present a spent token and the session
+would be revoked, signing both out.
+
+**The hand-off.**
+- Browser only (`syncHandoff`, on getSession and every auth change except INITIAL_SESSION):
+  cookie `nh_handoff` = current access token, `Secure; SameSite=Lax; Path=/`, Max-Age = token
+  expiry less 60s (at most about an hour). Cleared on sign-out. Never written in standalone.
+- Home Screen app with no session (`tryHandoff`, before the first `setSession`, Splash showing):
+  reads the cookie, deletes it (one attempt only), POSTs it as the bearer to `session-handoff`,
+  which checks it with `auth.getUser()` and returns `hashed_token` from
+  `auth.admin.generateLink({ type: "magiclink" })` (no email sent). The app redeems it with
+  `verifyOtp({ token_hash, type: "email" })`: a new, independent session, so the two apps never
+  share a refresh token. Any failure falls through to the 0.39.1 code screen.
+- `onAuthStateChange` now ignores `INITIAL_SESSION`, so the sign-in screen does not flash up
+  while a hand-off is in flight; `getSession()` owns the first answer.
+
+**Trade-offs, accepted.** The access token sits in a JS-readable first-party cookie (it is
+already JS-readable in localStorage) and is sent to portal.nalohub.com (Netlify) with page
+requests, over HTTPS only. A valid access token can now be turned into a full session through
+`session-handoff`; the token lifetime (1h) bounds that. `generateLink` replaces any sign-in code
+the person has pending. Needs iOS 17.2 or later, and the icon opened within the token's life;
+otherwise the code screen.
+
+### v0.39.1: Home Screen sign-in leads with the code (25 Sep 2026)
+
+`src/components/SignIn.jsx` and the version line in `src/ResidentPortal.jsx`. No database or
+edge-function change. Production and demo builds green (clean copy, fresh `npm install`).
+
+**The fault.** On iPhone a Home Screen app and Safari keep separate storage, so separate
+Supabase sessions. The Sign in button in the email always opens Safari, never the Home Screen
+app, so a resident who tapped it signed Safari in, then tapped the NaloHub icon and was asked
+for their email again. Every new link repeated the loop. A second, separate cause produced the
+same screen: `sent` lived only in React state, and switching to Mail to read the code often
+makes iOS reload a Home Screen app, dropping the person on the empty email screen with the
+code in hand. Session persistence itself was checked and is fine: `supabaseClient.js` uses
+`createClient` defaults (`persistSession`, `localStorage`, auto refresh), and `App.jsx` restores
+with `getSession()` + `onAuthStateChange`.
+
+**The fix.**
+- `isStandalone()` (`display-mode: standalone` or `navigator.standalone`). In standalone the
+  pre-send copy and button say "sign-in code", the waiting screen leads with "Type the code
+  from that email here." plus one line explaining that the email's button opens the web
+  browser, and the code field has `autoFocus`. Browser and desktop copy unchanged.
+- Pending state in `localStorage` key `nalo_signin_pending` = `{ email, at }`, read on mount and
+  honoured for 30 minutes (the OTP expiry). Written on send and on resend, cleared on a
+  successful `verifyOtp` and on "Use a different email".
+- `autoFocus` rather than a ref, because `Input` in `ui.jsx` is a plain function component and
+  React 18 does not forward refs through it.
+
+**What it does not change.** iOS will always open an email link in Safari. The code, typed in
+the Home Screen app, is the only way to sign that app in; once it is, the session persists
+(Home Screen apps are exempt from Safari's seven-day storage cap, and Supabase refreshes the
+token). Residents already stuck in the loop need one code sign-in from the icon.
+
+**Auth email templates (Supabase dashboard, 25 Sep).** Both are now the "Your door's open"
+design: `https://portal.nalohub.com/NaloHub-Logo.png` on white over a teal rule, navy button
+with **Sign in** in teal `#64A5B7` (about 6:1 on navy) and "Just Nalo it" small beneath, the
+`{{ .Token }}` box headed "On a different device, or the link isn't working? Type this code on
+the NaloHub sign-in screen instead:", and "Good for one use, for the next 30 minutes."
+- Magic link or OTP: subject "Tap, you're in. Just Nalo it."
+- Confirm sign up: subject "Welcome to NaloHub. Tap, you're in.", heading "Welcome in. Your
+  door's open." This one was still Supabase's default ("Confirm your email address", no code),
+  and it is what a first-ever sign-in receives, so new residents had never been sent a code.
+- Logo from the portal, not `nalohub.com`, which returns 403 through some proxies (see v0.35.0).
+- The templates live only in the dashboard; source copies are not yet in the repo.
 
 ### v0.39.0: committee-to-committee, and who the building manager can see (24 Sep 2026)
 

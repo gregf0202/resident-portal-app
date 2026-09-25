@@ -6,6 +6,7 @@ import { AppCtx, BuildingApp, Toast, themeById, UpdateBanner } from "./ResidentP
 import AddToHomeScreen from "./components/AddToHomeScreen.jsx";
 import { loadProfile, loadMyMemberships, loadBuildingStore, persistChange, loadInvoices, loadPlatformSettings, logActivity } from "./db.js";
 import { downloadInvoicePdf } from "./invoicePdf.js";
+import { syncHandoff, tryHandoff } from "./handoff.js";
 
 const KEYFRAMES = `
   @keyframes rpsun { 0%,100% { opacity:.75; transform:scale(1) } 50% { opacity:1; transform:scale(1.06) } }
@@ -49,8 +50,18 @@ export default function App() {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    // A Home Screen app opened for the first time has no session of its own; if iOS copied the
+    // browser's hand-off cookie across, trade it for one before showing the sign-in screen.
+    // session stays undefined (Splash) while that runs. See src/handoff.js.
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session && await tryHandoff()) return; // onAuthStateChange delivers the new session
+      setSession(data.session);
+      syncHandoff(data.session);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => {
+      if (e === "INITIAL_SESSION") return; // getSession above owns the first answer, so a hand-off is not pre-empted by a flash of the sign-in screen
+      setSession(s); syncHandoff(s);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 

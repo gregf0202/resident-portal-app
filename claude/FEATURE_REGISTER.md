@@ -3,7 +3,7 @@
 *The running record of what NaloHub does, what's just been built, and what's on the
 horizon. Written for people, not developers — one line per feature, no jargon.*
 
-**Last updated: 24 September 2026** · Maintained at every stage of development.
+**Last updated: 25 September 2026** · Maintained at every stage of development.
 
 > _**The working master is `claude/FEATURE_REGISTER.md` in the app repo** — alongside
 > `ARCHITECTURE.md`. Edit it there, commit it with the change, and in the same session push it
@@ -66,7 +66,10 @@ Everything a building gets on day one. Listed in the order it was built.
 
 ---
 
-## 2 · Built in the last four weeks *(mid August → 24 September 2026)*
+## 2 · Built in the last four weeks *(mid August → 25 September 2026)*
+- **Sign in once, in Safari or on the icon** *(25 September, v0.39.2)*: most people sign in in Safari first and add NaloHub to the Home Screen after, and the new icon still opened on the sign-in screen, because iPhone gives a Home Screen app its own fresh storage. It does carry cookies across, so NaloHub now leaves a short-lived pass in one, and the icon uses it on first launch to get a sign-in of its own. Sign in once in Safari, add to Home Screen within the hour, tap the icon, and you're in. If the pass has expired, the icon asks for the emailed code instead.
+- **The Home Screen app stays signed in** *(25 September, v0.39.1)*: on an iPhone the Home Screen app and Safari keep separate sign-ins, and the button in the sign-in email always opens Safari. So a resident tapped it, got signed in to Safari, tapped the NaloHub icon and was asked for their email again, every time. Opened from the Home Screen, NaloHub now asks for the code instead, says in one line why the email's button won't work there, and puts the cursor in the code box. It also remembers that a code is on its way, so popping over to Mail and back no longer lands you on an empty email screen. One code sign-in from the icon and the app stays signed in.
+- **Sign-in emails that look like NaloHub** *(25 September)*: the sign-in email now carries the NaloHub logo, a big "Sign in" button with "Just Nalo it" beneath, the code in its own box with plain words on when to use it, and warmer copy. First-time residents get a welcome version. Until now that first email was Supabase's plain default with no code in it at all.
 - **Committee Notices** *(24 September, v0.39.0)*: the committee gets its own board, separate from Announcements. Owners and tenants cannot see it, and neither can your building manager unless you tick "Share with the building manager" on that notice. The email is a nudge: the title and a button that opens NaloHub, with the detail kept in the app. Tick "Include the detail in the email" for the routine ones, like a meeting reminder. Announcements now means one thing: to residents.
 - **You decide what your building manager can see** *(24 September, v0.39.0)*: Correspondence, the building's email record, used to be open to every building manager with no way to change it. Settings now has a "Your building manager" card, and Correspondence is off unless your committee switches it on. Buildings run by their manager keep it. Documents needed no change: a manager only ever saw the documents marked for everyone.
 - **Managing agents can be told** *(24 September, v0.39.0)*: the agent on each tenanted lot is now an audience of its own, taken from the unit record, with one email per agency however many lots it holds. Curve has eleven agencies across twelve lots, and until now there was no way to reach any of them from NaloHub.
@@ -218,6 +221,7 @@ Everything a building gets on day one. Listed in the order it was built.
 | 3–4 September | **Know who is actually using it** | Usage analytics Layer 1: daily presence per building, per role, with a phone-or-computer marker; weekly and date-range reports; committees never see individual login times |
 | 22 September | **Reach everyone, on purpose** | v0.37.0: notices drawn from the unit register, not app sign-ups (1 reachable at Curve became 98) · Residents, Tenants and Owners who live elsewhere · Lives here on every owner · saved and rule-based distribution lists · a send record on every notice |
 | 22 September | **Sound like the building** | v0.38.0: notice emails carry the building's logo and name, the poster's signature, the building address three times, safe bold/lists/links, a preview before sending, and a quiet Powered by NaloHub |
+| 25 September | **Stay signed in** | v0.39.2: sign in once in Safari and the Home Screen icon picks it up · v0.39.1: the Home Screen app leads with the code and remembers it is waiting, so the iPhone sign-in loop ends · sign-in and welcome emails rebranded, and first-timers get a code at last |
 | 24 September | **Right people, right room** | v0.39.0: Committee Notices, committee-only and invisible to residents · the building manager's access to Correspondence becomes the committee's choice · managing agents reachable at last · several audiences in one notice |
 | 4 September | **Get everyone in** | v0.31.0: a code alongside the sign-in link, so the wrong device, a mail scanner or an in-app browser can no longer lock someone out · the "Getting into NaloHub on your phone" guide |
 | 5 September | **Meet the phone they actually have** | v0.31.3: Add to Home Screen steps describe what the person sees (Share icon, or "..." then Share) instead of naming an iOS version · v0.31.2: the update banner finally runs in production, not just the demo · v0.31.1: printable guides carry the logo once |
