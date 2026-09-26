@@ -47,11 +47,16 @@ export async function tryHandoff() {
     const url = import.meta.env.VITE_SUPABASE_URL;
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (!url || !key) return false;
+    // Give up after 8 seconds so a stalled network drops to the code screen
+    // instead of leaving "Loading" on screen for ever.
+    const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ac ? setTimeout(() => ac.abort(), 8000) : null;
     const r = await fetch(`${url}/functions/v1/session-handoff`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, apikey: key, "Content-Type": "application/json" },
       body: "{}",
-    });
+      signal: ac ? ac.signal : undefined,
+    }).finally(() => { if (timer) clearTimeout(timer); });
     if (!r.ok) return false;
     const { token_hash } = await r.json();
     if (!token_hash) return false;

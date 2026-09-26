@@ -3,6 +3,7 @@ import { supabase } from "../supabaseClient.js";
 import { T } from "../theme.js";
 import AnimatedHeader from "./AnimatedHeader.jsx";
 import { Btn, Input } from "./ui.jsx";
+import { friendlyError } from "../friendlyError.js";
 
 // Running from the Home Screen (iPhone or Android). This matters at sign-in:
 // the Sign in button in the email always opens the phone's browser, never the
@@ -34,8 +35,24 @@ const readPending = () => {
 const savePending = (email) => { try { localStorage.setItem(PENDING_KEY, JSON.stringify({ email, at: Date.now() })); } catch (e) {} };
 const clearPending = () => { try { localStorage.removeItem(PENDING_KEY); } catch (e) {} };
 
+// A sign-in or invite link that has expired (or was already used, often by a work
+// mail scanner) comes back with #error_code=otp_expired. Say so, instead of showing a
+// blank email form as if nothing had happened, then tidy the address bar.
+const readLinkError = () => {
+  try {
+    const h = new URLSearchParams((window.location.hash || "").replace(/^#/, "") + "&" + (window.location.search || "").replace(/^\?/, ""));
+    const code = h.get("error_code") || h.get("error");
+    if (!code) return "";
+    window.history.replaceState(null, "", window.location.pathname);
+    return /expired|otp|access_denied/i.test(code + " " + (h.get("error_description") || ""))
+      ? "That sign-in link has expired or has already been used. Enter your email below and we'll send a fresh one, with a code you can type instead."
+      : "That sign-in link didn't work. Enter your email below and we'll send a fresh one.";
+  } catch (e) { return ""; }
+};
+
 export default function SignIn() {
   const [standalone] = useState(isStandalone);
+  const [linkNote] = useState(readLinkError);
   const [pending] = useState(readPending);
   const [email, setEmail] = useState(pending ? pending.email : "");
   const [sent, setSent] = useState(!!pending);
@@ -49,25 +66,25 @@ export default function SignIn() {
   const [resent, setResent] = useState(false);
 
   const signInPw = async () => {
-    if (!email.trim() || !pw) return;
+    if (!email.trim() || !pw) { setErr("Enter your email and password first."); return; }
     setBusy(true); setErr("");
     const { error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password: pw,
     });
     setBusy(false);
-    if (error) setErr(error.message);
+    if (error) setErr(friendlyError(error));
   };
 
   const send = async () => {
-    if (!email.trim()) return;
+    if (!email.trim()) { setErr("Enter your email address first."); return; }
     setBusy(true); setErr("");
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: { emailRedirectTo: window.location.origin },
     });
     setBusy(false);
-    if (error) setErr(error.message); else { savePending(email.trim()); setSent(true); }
+    if (error) setErr(friendlyError(error)); else { savePending(email.trim()); setSent(true); }
   };
 
   // Verify the numeric code printed in the sign-in email. Works on whichever
@@ -91,7 +108,7 @@ export default function SignIn() {
     if (error) {
       const m = /expired|invalid/i.test(error.message)
         ? "That code didn't work. Check the digits, and make sure it's from the newest email. Codes expire, so if in doubt tap Send a fresh email."
-        : error.message;
+        : friendlyError(error);
       setCodeErr(m);
     } else clearPending();
     // On success onAuthStateChange in App.jsx takes over; nothing to do here.
@@ -113,7 +130,7 @@ export default function SignIn() {
     const secs = (error.message.match(/(\d+)\s*seconds?/i) || [])[1];
     setCodeErr(wait
       ? "Just a moment. We limit how often a sign-in email can be sent" + (secs ? `, so try again in about ${secs} seconds.` : ". Try again in about a minute.") + " The email already sent still works."
-      : error.message);
+      : friendlyError(error));
   };
 
   const google = async () => {
@@ -122,7 +139,7 @@ export default function SignIn() {
       provider: "google",
       options: { redirectTo: window.location.origin },
     });
-    if (error) setErr(error.message);
+    if (error) setErr(friendlyError(error));
   };
 
   return (
@@ -186,6 +203,10 @@ export default function SignIn() {
             </div>
           ) : (
             <div>
+              {linkNote && <div style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.35)", color: T.text, fontSize: 13, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>{linkNote}</div>}
+              {/* Google sign-in finishes in the browser, never in the Home Screen app, so
+                  it would leave the app signed out. Hidden there; the code works instead. */}
+              {!standalone && (<>
               <button onClick={google} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", background: "#fff", color: "#1f1f1f", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 10, padding: "11px 14px", fontWeight: 600, fontSize: 14, cursor: "pointer", marginBottom: 14 }}>
                 <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
                 Continue with Google
@@ -193,6 +214,7 @@ export default function SignIn() {
               <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 14px", color: T.textMuted, fontSize: 12 }}>
                 <span style={{ flex: 1, height: 1, background: T.border }} /> or <span style={{ flex: 1, height: 1, background: T.border }} />
               </div>
+              </>)}
               {usePw ? (
                 <>
                   <p style={{ color: T.textMuted, marginTop: 0 }}>Sign in with your email and password.</p>

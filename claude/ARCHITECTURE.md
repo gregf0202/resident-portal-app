@@ -2,7 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-25 · App version: v0.40.0 (Unit Search Investor dot for owners who live elsewhere,
+> Last updated: 2026-09-26 · App version: v0.41.0 (audit Release 1: friendly errors via
+> `src/friendlyError.js`, refused saves detected and undone, no restart on token refresh,
+> screen crash guard, directory privacy (0038), MSC means maintenance only (0039); v0.40.0 Unit Search Investor dot for owners who live elsewhere,
 > `unit_people.home_address` (0037); v0.39.2 Home Screen app picks up the browser's sign-in
 > via a one-time hand-off, edge function `session-handoff` v1; v0.39.1 Home Screen sign-in leads with the code and
 > survives a reload; Supabase Magic Link and Confirm signup emails rebranded; v0.39.0 Committee Notices with their own table and RLS
@@ -137,14 +139,21 @@ sub-committee) flag on any user.
 **Correspondence access** (single source of truth, top of `ResidentPortal.jsx`):
 
 ```js
-const CORR_ALLOW_BM = true; // building manager sees Correspondence — flip to false to remove
-const canSeeCorr = (u) => isCommittee(u.role) || (CORR_ALLOW_BM && u.role === "manager") || u.msc === true;
+// since v0.41.0 (migration 0039): MSC is maintenance only and never sees Correspondence
+const canSeeCorr = (u, building) => isCommittee(u.role)
+  || (u.role === "manager" && !!(building || {}).bmCorrespondence);
 ```
 
 `canSeeCorr` gates both the `NAV` entry and the `CorrespondenceView` guard, so they can't
-drift. Owners/tenants/strata get no access. **Restricted** threads are shown only to the
-committee proper (`isCommittee`), mirroring the database RLS — the building manager and
-MSC see ordinary committee threads but not restricted ones.
+drift. The building manager sees Correspondence only where the committee switched
+`bmCorrespondence` on (0032); the database rule is `corr_is_committee()`. Owners, tenants,
+strata and MSC owners get no access. **Restricted** threads are shown only to the committee
+proper (`isCommittee`).
+
+**MSC (Maintenance Sub-Committee) flag, since v0.41.0.** An owner with the tick may triage,
+quote, resolve jobs that need no vote and send a recommendation to vote (`is_msc()`,
+`can_maint()`); never votes, never sees Committee Notices or Correspondence. A manager with the
+tick is just the manager.
 
 ---
 
@@ -419,7 +428,8 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.40.0 (current, 25 Sep 2026):** Unit Search marks owners who live elsewhere with a purple
+- **v0.41.0 (current, 26 Sep 2026):** Audit Release 1, "no false alarms". See changelog.
+- **v0.40.0 (25 Sep 2026):** Unit Search marks owners who live elsewhere with a purple
   Investor dot (display flag, not a person type) and records their home or business address in
   new `unit_people.home_address` (0037). See changelog.
 - **v0.39.2 (25 Sep 2026):** Home Screen hand-off. The browser keeps its access token
@@ -543,6 +553,67 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.41.0: audit Release 1, no false alarms (26 Sep 2026)
+
+From the 26 Sep 2026 stress test (findings T2, T3, T6, T7, T10, T12, S1 to S3, S5 to S7,
+S12, S14, N1, G1, E11, E16, and the analytics 409 noise). Files: `src/App.jsx`,
+`src/ResidentPortal.jsx`, `src/db.js`, `src/components/SignIn.jsx`, `src/handoff.js`, new
+`src/friendlyError.js`; migrations `0038_directory_privacy`, `0039_msc_maintenance_only`.
+Demo and production builds green; demo driven headless per role (committee, manager, strata,
+owner, MSC owner, tenant) with no page errors; both migrations proven on prod inside a
+rolled-back transaction before release. **Migrations must be applied before the app deploys**
+(the app now writes `directory_opt_in`, `tower`, `floor`).
+
+- **Friendly errors.** `friendlyError(e)` replaces all 59 `flash(String(e.message || e))`
+  sites and the sign-in screen's raw auth text. Known shapes map to plain English with a next
+  step (offline, permission, timed-out sign-in, rate limit, server fault, date range,
+  duplicate, no BCC members); a message already written for people passes through; anything
+  technical gets a generic sentence. `isPermissionError(e)` for callers that need to know.
+- **Refused saves are no longer silent.** An UPDATE or DELETE refused by RLS returns no error,
+  it just touches no rows, so `persistChange` looked like it saved. Building, membership and
+  content deletes now ask for the ids back (`mustTouch`) and treat none as a refusal. `update()`
+  in App.jsx undoes the change on screen (only if nothing newer happened) and says whether it
+  was a permission or the connection. **Consequence to know:** any remaining control that a
+  role can press but RLS refuses now shows "Only the committee can change that" and reverts,
+  where before it quietly reverted on the next load. That is intended; Release 2 hides the ones
+  found (meeting RSVP for owners, Action Register for managers).
+- **No restart on token refresh.** The load effect keys on `session.user.id` (plus a retry
+  tick), not the session object, which Supabase replaces on every hourly refresh.
+- **Load failures and lost access.** `NoBuilding` has three kinds: not linked (Check again),
+  offline (Try again) and noaccess (own membership missing; no longer impersonates `users[0]`
+  except for platform admins). All offer Sign out.
+- **Sign out** is `scope: "local"`, clears local state even offline, and no longer signs out the
+  Home Screen app too.
+- **Sign-in screen:** expired or used links (`#error_code=otp_expired`) say so; empty fields
+  say what is missing; Google is hidden in standalone mode (it finishes in Safari).
+  Hand-off fetch aborts after 8 s.
+- **ScreenGuard** error boundary around `ViewRouter`, keyed on the view: a crash shows "This
+  screen hit a snag" with Back to dashboard and Reload, never a white page.
+- **Badges and milestones** for non-committee users are kept in localStorage
+  (`nalo_badges_<bid>_<uid>`, `nalo_milestones_<bid>_<uid>`); the committee still writes the
+  building record. Gallery "last seen" is per device (`nalo_gallery_seen_<bid>_<uid>`), and
+  `lastSeenGallery` alone no longer triggers a membership update.
+- **Directory (0038).** `memberships` gains `directory_opt_in` (default false), `tower`,
+  `floor`. Residents could previously read only their own membership row, so their directory
+  was empty in production and their own switches silently failed. Residents now read
+  `directory_for_building(bid)` (SECURITY DEFINER, opted-in active members only, phone or email
+  only where shared) and write `update_my_directory(...)` (own row only). Committee keeps the
+  full list and its existing path. A person added by the committee starts unlisted. New members
+  get a client-made uuid (`newId()`) so later edits find the row.
+- **MSC means maintenance only (0039, Greg 26 Sep).** An owner with the MSC tick may triage,
+  quote, resolve jobs that need no vote and send a recommendation to vote; never votes, never
+  sees Committee Notices or Correspondence. `is_committee_member()` is now bcc/admin only;
+  `corr_is_committee()` drops the MSC branch; `broadcast_recipients` committee audience is bcc
+  only (Curve's building manager, who carries the tick, was receiving committee-only notices);
+  new `is_msc(bid)`; `motions_insert` and `motions_select` allow MSC for `context_type =
+  'maintenance'` only; `votes_insert` unchanged (bcc). App: `isMsc(u)`, `isCommitteeMember` =
+  `isCommittee`, `canSeeCorr` without MSC, nav shows Maintenance Workflow and Walk-Through to
+  MSC, Send to vote shown to committee and MSC only.
+- **Also:** Help's Take the tour works in production; logo and theme cards are committee-only;
+  Unit Search reloads the overview after creating a unit (the white screen); Entitlements
+  inputs keyed on unit and descriptor; copy buttons report honestly (`copyText`); analytics
+  opens use upsert with ignoreDuplicates (no more 409s).
 
 ### v0.40.0: owners who live elsewhere, shown as Investor, with an address (25 Sep 2026)
 

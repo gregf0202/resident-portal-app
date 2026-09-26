@@ -46,7 +46,10 @@ const memberToUser = (m) => ({
   name: m.full_name || m.email || "Resident", unit: m.unit || "",
   role: m.role, status: m.status, email: m.email || "", phone: m.phone || "",
   showPhone: !!m.show_phone, showEmail: !!m.show_email, msc: !!m.msc,
-  directoryOptIn: true, lastSeenGallery: m.last_seen_gallery || null,
+  // directory_opt_in, tower and floor arrive with migration 0038. Before it, the
+  // switch had no column and read as true for everyone.
+  directoryOptIn: !!m.directory_opt_in, tower: m.tower || "", floor: m.floor || "",
+  lastSeenGallery: m.last_seen_gallery || null,
 });
 
 // Default building shape (everything the app expects present)
@@ -74,6 +77,19 @@ export async function loadMyMemberships(authUser) {
     .eq("user_id", authUser.id).eq("status", "active");
   if (error) throw error;
   return data || [];
+}
+
+// ---- resident directory (migration 0038) ----
+// Opted-in neighbours only, with a phone or email only where that person shared it.
+export async function loadDirectory(bid) {
+  const { data, error } = await supabase.rpc("directory_for_building", { p_building: bid });
+  if (error) throw error;
+  return (data || []).map((m) => ({ id: m.id, buildingId: bid, name: m.full_name || "Resident", unit: m.unit || "", role: m.role, tower: m.tower || "", floor: m.floor || "", phone: m.phone || "", email: m.email || "", showPhone: !!m.phone, showEmail: !!m.email, directoryOptIn: true, status: "active" }));
+}
+// A person's own directory settings, written through the one function allowed to.
+export async function updateMyDirectory(bid, u) {
+  const { error } = await supabase.rpc("update_my_directory", { p_building: bid, p_phone: u.phone || null, p_show_phone: !!u.showPhone, p_show_email: !!u.showEmail, p_opt_in: !!u.directoryOptIn });
+  if (error) throw error;
 }
 
 // ---- load a building's full store ----
@@ -290,6 +306,11 @@ const diff = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
 export async function persistChange(prev, next, bid) {
   if (!prev || !next) return;
   const jobs = []; const audits = [];
+  // An UPDATE or DELETE that row-level security refuses does not error: it simply
+  // touches no rows. Ask for the affected ids back and treat "none" as a refusal, so
+  // the app can undo the change on screen and say so instead of pretending it saved.
+  const mustTouch = (q) => q.select("id").then((r) => (r.error ? r : (!r.data || !r.data.length) ? { error: { message: "permission denied: nothing was saved", code: "42501" } } : r));
+  const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ""));
   for (const t of CONTENT) {
     const before = ix(prev[t]); const after = ix(next[t]);
     for (const rec of next[t] || []) {
@@ -304,20 +325,24 @@ export async function persistChange(prev, next, bid) {
         audits.push([t + (before[rec.id] ? ".updated" : ".created"), rec.title || rec.name || rec.id]);
       }
     }
-    for (const rec of prev[t] || []) if (!after[rec.id]) { jobs.push(supabase.from(t).delete().eq("id", rec.id)); audits.push([t + ".deleted", rec.title || rec.name || rec.id]); }
+    for (const rec of prev[t] || []) if (!after[rec.id]) { jobs.push(mustTouch(supabase.from(t).delete().eq("id", rec.id))); audits.push([t + ".deleted", rec.title || rec.name || rec.id]); }
   }
   const pb = (prev.buildings || [])[0];
   const nb = (next.buildings || []).find((b) => pb && b.id === pb.id);
-  if (pb && nb && diff(pb, nb)) { const { id, ...data } = nb; jobs.push(supabase.from("buildings").update({ data }).eq("id", id)); audits.push(["building.settings_updated", nb.name || id]); }
+  if (pb && nb && diff(pb, nb)) { const { id, ...data } = nb; jobs.push(mustTouch(supabase.from("buildings").update({ data }).eq("id", id))); audits.push(["building.settings_updated", nb.name || id]); }
 
   const beforeU = ix(prev.users); const afterU = ix(next.users);
   for (const u of next.users || []) {
     const b = beforeU[u.id];
-    const row = { full_name: u.name, role: u.role, unit: u.unit, phone: u.phone, show_phone: !!u.showPhone, show_email: !!u.showEmail, msc: !!u.msc, status: u.status || "pending", email: u.email };
-    if (!b) { jobs.push(supabase.from("memberships").insert({ building_id: bid, ...row })); audits.push(["member.added", u.email || u.name]); }
-    else if (diff(b, u)) { jobs.push(supabase.from("memberships").update(row).eq("id", u.id)); audits.push(["member.updated", u.email || u.name]); }
+    const row = { full_name: u.name, role: u.role, unit: u.unit, phone: u.phone, show_phone: !!u.showPhone, show_email: !!u.showEmail, msc: !!u.msc, status: u.status || "pending", email: u.email, directory_opt_in: !!u.directoryOptIn, tower: u.tower || null, floor: u.floor || null };
+    // Fields that live only on the device (lastSeenGallery) are not membership columns;
+    // a change to them alone must not send an update.
+    const same = b && !diff({ ...b, lastSeenGallery: null }, { ...u, lastSeenGallery: null });
+    // New members carry a client-made uuid so later edits find the same row.
+    if (!b) { jobs.push(supabase.from("memberships").insert({ ...(isUuid(u.id) ? { id: u.id } : {}), building_id: bid, ...row })); audits.push(["member.added", u.email || u.name]); }
+    else if (!same) { jobs.push(mustTouch(supabase.from("memberships").update(row).eq("id", u.id))); audits.push(["member.updated", u.email || u.name]); }
   }
-  for (const u of prev.users || []) if (!afterU[u.id]) { jobs.push(supabase.from("memberships").delete().eq("id", u.id)); audits.push(["member.removed", u.email || u.name]); }
+  for (const u of prev.users || []) if (!afterU[u.id]) { jobs.push(mustTouch(supabase.from("memberships").delete().eq("id", u.id))); audits.push(["member.removed", u.email || u.name]); }
 
   const results = await Promise.all(jobs);
   const failed = results.find((r) => r && r.error);
@@ -1701,8 +1726,10 @@ export async function logActivity(buildingId, role = null) {
     // building on a phone, which is the signal behind most onboarding help.
     const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
     const device = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) ? "mobile" : "desktop";
+    // Second open of the day is a duplicate by design; ignore it quietly rather than
+    // logging a 409 that buries real errors.
     supabase.from("activity_events")
-      .insert({ building_id: buildingId, user_id: uid, role: role || null, kind: "building.open", device })
+      .upsert({ building_id: buildingId, user_id: uid, role: role || null, kind: "building.open", device }, { onConflict: "building_id,user_id,kind,day", ignoreDuplicates: true })
       .then(() => {}, () => {});
   } catch (e) { /* never block the UI on analytics */ }
 }
@@ -1996,6 +2023,10 @@ if (DEMO_MODE) {
   getDocumentFile = async () => null;
   getGalleryImages = async () => ({});
   // sorted the way the live query orders them, so the chip row reads naturally
+  // Directory (0038): the demo keeps every member in the store, so these are never
+  // needed by the screen; answered anyway so nothing can throw.
+  loadDirectory = async () => [];
+  updateMyDirectory = async () => {};
   listUnitsOverview = async () => {
     const n = (arr, uid) => arr.filter((x) => x.unit_id === uid).length;
     return [...DS.units]
