@@ -2,7 +2,9 @@
 
 > Living reference for the NaloHub resident-portal app. **Read this at the start of any
 > work session; update it in the same commit whenever the architecture changes.**
-> Last updated: 2026-09-26 · App version: v0.41.0 (audit Release 1: friendly errors via
+> Last updated: 2026-09-26 · App version: v0.42.0 (audit Release 2: every request answered —
+> meeting decisions, withdraw, waiting-on-your-vote card, vote reminders held off, job steps reach
+> the resident, approval email (0040)); v0.41.0 (audit Release 1: friendly errors via
 > `src/friendlyError.js`, refused saves detected and undone, no restart on token refresh,
 > screen crash guard, directory privacy (0038), MSC means maintenance only (0039); v0.40.0 Unit Search Investor dot for owners who live elsewhere,
 > `unit_people.home_address` (0037); v0.39.2 Home Screen app picks up the browser's sign-in
@@ -428,7 +430,8 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 
 ## 11. Recent history (high level)
 
-- **v0.41.0 (current, 26 Sep 2026):** Audit Release 1, "no false alarms". See changelog.
+- **v0.42.0 (current, 26 Sep 2026):** Audit Release 2, "every request gets an answer". See changelog.
+- **v0.41.0 (26 Sep 2026):** Audit Release 1, "no false alarms". See changelog.
 - **v0.40.0 (25 Sep 2026):** Unit Search marks owners who live elsewhere with a purple
   Investor dot (display flag, not a person type) and records their home or business address in
   new `unit_people.home_address` (0037). See changelog.
@@ -553,6 +556,63 @@ large, they change most often, and a stale copy is actively dangerous — see ab
 ---
 
 ## Changelog
+
+### v0.42.0: audit Release 2, every request gets an answer (26 Sep 2026)
+
+From the 26 Sep 2026 stress test (the Release 2 group in the Fix Order, plus Greg's
+"Decided at meeting" and vote-nudge items). Files:
+`src/ResidentPortal.jsx`, `src/db.js`; migration `0040_every_request_answered`. Demo and
+production builds green; headless crawl of committee, owner, tenant and building-manager roles
+(627 clicks) with no page errors and no raw-error toasts; 0040 proven on prod inside a
+rolled-back transaction. **Apply 0040 before the app deploys** (the app calls
+`decide_motion_at_meeting`, and managers' booking decisions need the new policies).
+
+- **Decided at a meeting.** `decide_motion_at_meeting(motion, passed, date, minute_ref, for,
+  against, abstain)`, SECURITY INVOKER, committee only, open motions only, date today or earlier,
+  counts non-negative and consistent with the result. Closes the motion through the normal
+  status change, so `execute_motion_outcome` runs exactly as for a vote. Needed because a
+  threshold that counts members who never sign in (Curve) can otherwise never close. Shown in
+  Voting as "Decided at a meeting" and in the Reports decisions register.
+- **Withdraw.** Any committee member (not only the opener) can withdraw an open motion, with a
+  confirm; `withdrawMotion` checks `status = open` and returns the id, so a race says "already
+  decided or withdrawn". Residents can withdraw their own submitted or under-review application;
+  trigger `trg_withdraw_application_motion` withdraws its open motion too. `decideApplication`
+  and `withdrawApplication` only touch submitted/under_review rows and throw if none.
+- **Approve or Decline without a vote.** Applications and bookings show Approve/Decline
+  whenever no motion is open. Managers may read and decide **bookings** only
+  (`app_select_manager_bookings`, `app_update_manager_bookings`, `app_att_manager_bookings`);
+  applications stay committee-only. Approvals lists pending bookings with a Decide link, and
+  the nav badge no longer counts the legacy `store.bookings`.
+- **Voting screen.** Only `bcc` sees vote buttons (MSC and managers follow, never vote);
+  a "Waiting on your vote" banner and a Dashboard `WaitingVotesCard` for bcc members; each
+  motion says how many committee members have not signed in yet; busy states; proxy dates
+  validated; revoke confirms.
+- **Vote reminders (built, NOT scheduled).** Table `vote_reminders` (RLS: committee read) and
+  `send_vote_reminders(p_dry_run default true)`, revoked from clients: members who have not
+  voted on a motion open 3+ days, then every 7 days, at most 3 per motion, internal buildings
+  excluded. A dry run on 26 Sep would email 3 Curve BCC members. Turning on a daily pg_cron job
+  is Greg's decision.
+- **Maintenance reaches the reporter.** New reports store `raisedById` and `raisedByAuth`.
+  `maintenance_resident_update()` (SECURITY DEFINER, no client grant) writes plain-English
+  updates and status onto the job; `execute_motion_outcome` uses it for decided motions and
+  records withdrawn maintenance motions on the trail; `notify_maintenance_activity` alerts the
+  reporter on triage, sent to committee, decided, booked and resolved (by `raisedByAuth`, else
+  a unique name match; never when the reporter is committee, manager or MSC). In the app,
+  `MWF_RESIDENT`/`toResident()` do the same, "Resolved (no vote needed)" is a status change,
+  Send to vote hides while a vote is open and offers "Send to vote again" after a fail, and
+  confirming a contractor without a passed vote asks first.
+- **Access approval email.** `trg_access_approved_email` on memberships pending → active sends
+  the welcome email through `send-email` (x-nalo-internal); failure never blocks the approval.
+  `welcome_email_html` carries the two-route Add to Home Screen instruction.
+- **Parking permit numbering** takes an advisory lock, so two permits issued at once cannot
+  share a number.
+- **Hidden where RLS would refuse** (the Release 1 consequence): meeting RSVP is committee-only
+  (others see a note); the Action Register is view-only for non-committee; alerts route each
+  role to a screen it can open, or explain.
+- **Smaller:** New meeting form and empty state; booking dates required, not past, in order,
+  with a clash confirm; attachment type and size checked before upload (100 MB media), and an
+  upload failure keeps the application and names the file; expired permit badge reads
+  `date_to`; the pending-access screen has Sign out.
 
 ### v0.41.0: audit Release 1, no false alarms (26 Sep 2026)
 

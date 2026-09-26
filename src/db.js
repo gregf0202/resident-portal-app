@@ -824,16 +824,18 @@ export async function createApplication(bid, authUserId, unitId, kind, category,
   return data.id;
 }
 export async function decideApplication(bid, id, approve, note, authUserId) {
-  const { error } = await supabase.from("applications").update({
+  const { data, error } = await supabase.from("applications").update({
     status: approve ? "approved" : "declined",
     decided_by: authUserId, decided_at: new Date().toISOString(), decision_note: note || null,
-  }).eq("id", id);
+  }).eq("id", id).in("status", ["submitted", "under_review"]).select("id");
   if (error) throw error;
+  if (!data || !data.length) throw new Error("This request has already been decided or withdrawn, or you don't have permission to decide it.");
   audit(bid, approve ? "application.approved" : "application.declined", id);
 }
 export async function withdrawApplication(bid, id) {
-  const { error } = await supabase.from("applications").update({ status: "withdrawn" }).eq("id", id);
+  const { data, error } = await supabase.from("applications").update({ status: "withdrawn" }).eq("id", id).in("status", ["draft", "submitted", "under_review"]).select("id");
   if (error) throw error;
+  if (!data || !data.length) throw new Error("This request has already been decided, so it can't be withdrawn.");
   audit(bid, "application.withdrawn", id);
 }
 export async function listApplicationAttachments(applicationIds) {
@@ -927,7 +929,17 @@ export async function amendMotionConditions(motionId, conditions, reason, author
   return data;
 }
 export async function withdrawMotion(id) {
-  const { error } = await supabase.from("motions").update({ status: "withdrawn", decided_at: new Date().toISOString() }).eq("id", id).eq("status", "open");
+  const { data, error } = await supabase.from("motions").update({ status: "withdrawn", decided_at: new Date().toISOString(), outcome_note: "Withdrawn by the committee." }).eq("id", id).eq("status", "open").select("id");
+  if (error) throw error;
+  if (!data || !data.length) throw new Error("This motion has already been decided or withdrawn.");
+}
+// Close an open motion as decided at a committee meeting (migration 0040). The database
+// checks the count agrees with the outcome and runs the same outcome as a vote would.
+export async function decideMotionAtMeeting(motionId, d) {
+  const { error } = await supabase.rpc("decide_motion_at_meeting", {
+    p_motion: motionId, p_passed: !!d.passed, p_meeting_date: d.date, p_minute_ref: d.minuteRef || null,
+    p_for: Number(d.for) || 0, p_against: Number(d.against) || 0, p_abstain: Number(d.abstain) || 0,
+  });
   if (error) throw error;
 }
 export async function listProxies(bid) {
@@ -2364,7 +2376,7 @@ if (DEMO_MODE) {
       if (approve && a.category === "parking_permit") DS.permits.unshift({ id: id(), application_id: aid, permit_no: "PP-" + String(DS.permits.length + 8).padStart(4, "0"), unit_number: a.details.unit, vehicle_make: a.details.vehicle_make, vehicle_model: a.details.vehicle_model, vehicle_colour: a.details.vehicle_colour, vehicle_rego: a.details.vehicle_rego, date_from: a.details.date_from, date_to: a.details.date_to, approval_date: localDate(), status: "active" });
     }
   };
-  withdrawApplication = async (_b, aid) => { const a = DS.applications.find((x) => x.id === aid); if (a) a.status = "withdrawn"; };
+  withdrawApplication = async (_b, aid) => { const a = DS.applications.find((x) => x.id === aid); if (!a || !["draft", "submitted", "under_review"].includes(a.status)) throw new Error("This request has already been decided, so it can't be withdrawn."); a.status = "withdrawn"; DS.motions.filter((m) => m.context_type === "application" && m.context_id === aid && m.status === "open").forEach((m) => { m.status = "withdrawn"; m.decided_at = now(); m.outcome_note = "Withdrawn: the applicant withdrew the application."; }); };
   listApplicationAttachments = async (ids) => DS.appAtts.filter((a) => ids.includes(a.application_id));
   addApplicationAttachment = async (aid, up) => { DS.appAtts.push({ id: id(), application_id: aid, file_name: up.name, file_kind: up.kind, storage_path: up.path }); };
   uploadMedia = async (_b, _area, file) => { const path = "demo/" + id(); files[path] = URL.createObjectURL(file); return { name: file.name, path, kind: /^image\//.test(file.type) ? "image" : /^video\//.test(file.type) ? "video" : "document" }; };
@@ -2393,6 +2405,14 @@ if (DEMO_MODE) {
     return { version: toV, superseded: superseded.length };
   };
   createMotion = async (_b, _u, m) => { const mid = id(); DS.motions.unshift({ id: mid, eligible_count: 6, threshold: 4, status: "open", opened_at: now(), opened_by: DEMO_UID, outcome_note: null, ...m }); return mid; };
+  // Mirrors execute_motion_outcome() for maintenance motions, so the demo workflow moves on.
+  const demoMaintOutcome = (m) => {
+    if (!m || m.context_type !== "maintenance" || !m.context_id) return;
+    const mid = m.context_id; if (!DS.mact[mid]) DS.mact[mid] = [];
+    DS.mact[mid].push({ id: id(), maintenance_id: mid, kind: "decision", body: `Motion ${m.status}: ${m.title} (${m.outcome_note || ""})`, data: { motion_id: m.id, quote_id: m.details && m.details.quote_id, outcome: m.status }, created_at: now() });
+    const qid = m.details && m.details.quote_id;
+    if (m.status === "passed" && qid) Object.values(DS.quotes).forEach((arr) => { if (arr.some((q) => q.id === qid)) arr.forEach((q) => { q.status = q.id === qid ? "accepted" : (["received", "shortlisted", "recommended"].includes(q.status) ? "rejected" : q.status); }); });
+  };
   castVote = async (mid, uid, vote, comment, proxy) => {
     DS.votes.push({ id: id(), motion_id: mid, voter_user_id: uid || DEMO_UID, vote, comment: comment || null, proxy_for_user_id: proxy ? proxy.principal_user_id : null, proxy_appointment_id: proxy ? proxy.id : null, created_at: now() });
     const m = DS.motions.find((x) => x.id === mid);
@@ -2403,9 +2423,22 @@ if (DEMO_MODE) {
         if (m.context_type === "application") decideApplication(null, m.context_id, true, "Decided by BCC vote: " + m.outcome_note + (m.details && m.details.conditions ? ` — approval subject to the attached conditions (v${m.version || 1})` : ""));
         if (m.context_type === "application") { const a = DS.applications.find((x) => x.id === m.context_id); if (a && m.details && m.details.conditions) a.details = { ...a.details, conditions: m.details.conditions }; }
       } else if (yes + (m.eligible_count - vs.length) < m.threshold) { m.status = "failed"; m.decided_at = now(); m.outcome_note = `${yes} yes / ${no} no of ${m.eligible_count} members — majority not achievable`; if (m.context_type === "application") decideApplication(null, m.context_id, false, "Decided by BCC vote: " + m.outcome_note); }
+      if (m.status !== "open") demoMaintOutcome(m);
     }
   };
-  withdrawMotion = async (mid) => { const m = DS.motions.find((x) => x.id === mid); if (m) { m.status = "withdrawn"; m.decided_at = now(); } };
+  withdrawMotion = async (mid) => { const m = DS.motions.find((x) => x.id === mid); if (!m || m.status !== "open") throw new Error("This motion has already been decided or withdrawn."); m.status = "withdrawn"; m.decided_at = now(); m.outcome_note = "Withdrawn by the committee."; if (m.context_type === "maintenance" && m.context_id) { if (!DS.mact[m.context_id]) DS.mact[m.context_id] = []; DS.mact[m.context_id].push({ id: id(), maintenance_id: m.context_id, kind: "decision", body: "Motion withdrawn: " + m.title, data: { motion_id: m.id, outcome: "withdrawn" }, created_at: now() }); } };
+  decideMotionAtMeeting = async (mid, d) => {
+    const m = DS.motions.find((x) => x.id === mid);
+    if (!m || m.status !== "open") throw new Error("This motion has already been decided or withdrawn.");
+    const f = Number(d.for) || 0, a = Number(d.against) || 0, ab = Number(d.abstain) || 0;
+    if (!d.date || d.date > ymdLocal(new Date())) throw new Error("The meeting date must be today or earlier.");
+    if (d.passed && f <= a) throw new Error("For the motion to pass, more members must have voted for it than against it.");
+    if (!d.passed && f > a) throw new Error("More members voted for it than against, so it passed. Choose Passed.");
+    m.status = d.passed ? "passed" : "failed"; m.decided_at = now();
+    m.outcome_note = `Decided at the committee meeting on ${d.date}${d.minuteRef ? ` (minutes ${d.minuteRef})` : ""}: ${f} for, ${a} against${ab ? `, ${ab} abstained` : ""}`;
+    if (m.context_type === "application") decideApplication(null, m.context_id, !!d.passed, "Decided by BCC vote: " + m.outcome_note, DEMO_UID);
+    demoMaintOutcome(m);
+  };
   listProxies = async () => [...DS.proxies];
   createProxy = async (_b, p) => { DS.proxies.unshift({ id: id(), status: "active", created_at: now(), ...p }); };
   revokeProxy = async (_b, pid) => { const p = DS.proxies.find((x) => x.id === pid); if (p) p.status = "revoked"; };
